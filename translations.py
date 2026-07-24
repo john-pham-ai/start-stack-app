@@ -1,6 +1,14 @@
 TRANSLATIONS = {
     "title": {"en": "start_stack command builder", "ja": "start_stack コマンドビルダー"},
     "vehicle_name": {"en": "vehicle_name", "ja": "車両名（vehicle_name）"},
+    "vehicle_name_number_prompt": {
+        "en": "vehicle_name — enter just the number (e.g. 807 for truck-807)",
+        "ja": "車両名 — 数字だけを入力（例: 807 → truck-807）（vehicle_name）",
+    },
+    "nav_hint": {
+        "en": "(type 'back' to go back, 'quit' to quit)",
+        "ja": "（戻るには back、終了するには quit と入力）",
+    },
     "launch_config": {"en": "launch_config", "ja": "起動設定（launch_config）"},
     "map_key": {"en": "map_key (optional)", "ja": "マップキー（map_key・任意）"},
     "route": {"en": "route (optional)", "ja": "ルート（route・任意）"},
