@@ -1,11 +1,13 @@
+import pyperclip
 import questionary
 from questionary import Choice
 
-from stack_options import build_command, load_options
+from stack_options import build_command, load_options, routes_for_map_key
 
 
-def choices_for(options, field, optional=False):
-    result = [Choice(title=opt.label, value=opt.value) for opt in options[field]]
+def choices_for(options, field, optional=False, opts_list=None):
+    opts_list = opts_list if opts_list is not None else options[field]
+    result = [Choice(title=opt.label, value=opt.value) for opt in opts_list]
     if optional:
         result.insert(0, Choice(title="-- none --", value=""))
     return result
@@ -17,7 +19,10 @@ def main():
     vehicle_name = questionary.select("vehicle_name", choices=choices_for(options, "vehicle_name")).ask()
     launch_config = questionary.select("launch_config", choices=choices_for(options, "launch_config")).ask()
     map_key = questionary.select("map_key (optional)", choices=choices_for(options, "map_key", optional=True)).ask()
-    route = questionary.select("route (optional)", choices=choices_for(options, "route", optional=True)).ask()
+    filtered_routes = routes_for_map_key(options, map_key)
+    route = questionary.select(
+        "route (optional)", choices=choices_for(options, "route", optional=True, opts_list=filtered_routes)
+    ).ask()
     enable_japan_driving = questionary.confirm("enable_japan_driving?", default=False).ask()
     local = questionary.confirm("local?", default=False).ask()
 
@@ -31,6 +36,11 @@ def main():
     )
 
     print("\n" + command + "\n")
+    try:
+        pyperclip.copy(command)
+        print("(copied to clipboard)\n")
+    except pyperclip.PyperclipException:
+        print("(could not copy to clipboard)\n")
 
 
 if __name__ == "__main__":

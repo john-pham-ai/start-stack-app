@@ -31,6 +31,14 @@ def load_options(csv_path=CSV_PATH):
     return options
 
 
+def routes_for_map_key(options, map_key):
+    """Restrict route choices to ones prefixed with map_key, if any exist."""
+    if not map_key:
+        return options["route"]
+    matching = [opt for opt in options["route"] if opt.value.startswith(map_key)]
+    return matching if matching else options["route"]
+
+
 def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False, local=False):
     parts = ["start_stack", "--vehicle_name", vehicle_name, "--launch_config", launch_config]
     if map_key:

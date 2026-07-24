@@ -27,13 +27,13 @@ PAGE = """
     </select>
   </label>
   <label>map_key (optional)
-    <select name="map_key">
+    <select name="map_key" id="map_key">
       <option value="">-- none --</option>
       {% for opt in options.map_key %}<option value="{{ opt.value }}" {% if opt.value == form.map_key %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
     </select>
   </label>
   <label>route (optional)
-    <select name="route">
+    <select name="route" id="route">
       <option value="">-- none --</option>
       {% for opt in options.route %}<option value="{{ opt.value }}" {% if opt.value == form.route %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
     </select>
@@ -44,8 +44,84 @@ PAGE = """
 </form>
 {% if command %}
   <h3>Command</h3>
-  <pre>{{ command }}</pre>
+  <pre id="command">{{ command }}</pre>
+  <button type="button" id="copy-btn">Copy to clipboard</button>
+  <span id="copy-status"></span>
 {% endif %}
+<script>
+  (function () {
+    var mapSelect = document.getElementById("map_key");
+    var routeSelect = document.getElementById("route");
+    var allRouteOptions = Array.prototype.slice.call(routeSelect.options);
+
+    function applyFilter() {
+      var mapKey = mapSelect.value;
+      var matching = allRouteOptions.filter(function (opt) {
+        return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
+      });
+      var visible = mapKey && matching.length ? matching : allRouteOptions;
+      var previousValue = routeSelect.value;
+
+      routeSelect.innerHTML = "";
+      allRouteOptions.forEach(function (opt) {
+        if (opt.value === "" || visible.indexOf(opt) !== -1) {
+          routeSelect.appendChild(opt);
+        }
+      });
+
+      if (visible.some(function (opt) { return opt.value === previousValue; })) {
+        routeSelect.value = previousValue;
+      } else {
+        routeSelect.value = "";
+      }
+    }
+
+    mapSelect.addEventListener("change", applyFilter);
+    applyFilter();
+  })();
+
+  (function () {
+    var commandEl = document.getElementById("command");
+    var copyBtn = document.getElementById("copy-btn");
+    var status = document.getElementById("copy-status");
+    if (!commandEl || !copyBtn) return;
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      var textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return Promise.resolve();
+    }
+
+    function showStatus(message) {
+      status.textContent = message;
+      setTimeout(function () { status.textContent = ""; }, 2000);
+    }
+
+    copyBtn.addEventListener("click", function () {
+      copyText(commandEl.textContent).then(function () {
+        showStatus("Copied!");
+      }).catch(function () {
+        showStatus("Copy failed — copy manually.");
+      });
+    });
+
+    // Best-effort auto-copy on page load. Browsers may silently block this
+    // since it isn't tied to a direct user gesture on this page.
+    copyText(commandEl.textContent).then(function () {
+      showStatus("Copied!");
+    }).catch(function () {});
+  })();
+</script>
 """
 
 

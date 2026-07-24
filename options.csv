@@ -33,13 +33,24 @@ launch_config,etc_sds_road_readiness,
 launch_config,sds_road_readiness,
 launch_config,secondary_road_readiness,
 launch_config,mrm_arbiter_integration_test,
+map_key,crows_landing,
+map_key,jp_tokyo,
+map_key,jp_zone_53,
+map_key,jp_zone_54,
 map_key,shirosato_zone_54,Shirosato Zone 54 (Main)
-map_key,shirosato_zone_12,Shirosato Zone 12
-map_key,shirosato_zone_88,
-map_key,tsukuba_test_track,Tsukuba Test Track
-map_key,narita_industrial_park,
+map_key,shirosato_reversed_zone_54,
+map_key,sunnyvale_office,
+map_key,usa_zone_10,
+map_key,walnut_creek,
 route,shoreline_terminal_10kph,Shoreline Terminal - Slow
 route,shoreline_terminal_25kph,Shoreline Terminal - Fast
 route,mountain_pass_35kph,Mountain Pass
 route,downtown_loop_20kph,Downtown Loop
 route,harbor_bridge_15kph,
+route,crows_landing_anticw_inner_loop,
+route,crows_landing_anticw_merge_in_loop,
+route,crows_landing_anticw_outer_loop,
+route,crows_landing_cw_inner_lc_loop,
+route,crows_landing_cw_inner_loop,
+route,crows_landing_cw_outer_lc_loop,
+route,crows_landing_cw_outer_loop,
