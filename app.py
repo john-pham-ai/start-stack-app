@@ -56,37 +56,13 @@ PAGE = """
     var mapSelect = document.getElementById("map_key");
     var routeSelect = document.getElementById("route");
     var allRouteOptions = Array.prototype.slice.call(routeSelect.options);
-    var allMapKeys = Array.prototype.slice.call(mapSelect.options)
-      .map(function (opt) { return opt.value; })
-      .filter(function (v) { return v !== ""; });
 
-    // A route "owned" by a map_key (value prefixed with that map_key's value)
-    // only shows up for that map_key; unprefixed routes are generic and show
-    // up for every map_key that has no owned routes of its own.
-    function ownerOf(routeValue) {
-      for (var i = 0; i < allMapKeys.length; i++) {
-        if (routeValue.indexOf(allMapKeys[i]) === 0) return allMapKeys[i];
-      }
-      return null;
-    }
-
+    // Routes only show up for the map_key they're tied to (prefix match).
     function applyFilter() {
       var mapKey = mapSelect.value;
-      var visible;
-      if (!mapKey) {
-        visible = allRouteOptions;
-      } else {
-        var owned = allRouteOptions.filter(function (opt) {
-          return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
-        });
-        if (owned.length) {
-          visible = owned;
-        } else {
-          visible = allRouteOptions.filter(function (opt) {
-            return opt.value === "" || ownerOf(opt.value) === null;
-          });
-        }
-      }
+      var visible = !mapKey ? allRouteOptions : allRouteOptions.filter(function (opt) {
+        return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
+      });
       var previousValue = routeSelect.value;
 
       routeSelect.innerHTML = "";

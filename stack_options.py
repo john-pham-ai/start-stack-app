@@ -32,27 +32,16 @@ def load_options(csv_path=CSV_PATH):
 
 
 def routes_for_map_key(options, map_key):
-    """Restrict routes to the selected map_key's own routes, if it has any.
+    """Restrict routes to only those tied to the selected map_key.
 
-    A route is "owned" by a map_key if its value is prefixed with that
-    map_key's value (e.g. crows_landing_cw_outer_loop is owned by
-    crows_landing). If the selected map_key owns routes, only those show
-    up. Otherwise, fall back to routes not owned by any map_key at all.
+    A route is tied to a map_key if its value is prefixed with that
+    map_key's value (e.g. crows_landing_cw_outer_loop is tied to
+    crows_landing). Routes with no matching map_key never show up once a
+    map_key is selected.
     """
     if not map_key:
         return options["route"]
-
-    owned = [opt for opt in options["route"] if opt.value.startswith(map_key)]
-    if owned:
-        return owned
-
-    map_key_values = [opt.value for opt in options["map_key"]]
-
-    def owner(route_value):
-        return next((v for v in map_key_values if route_value.startswith(v)), None)
-
-    generic = [opt for opt in options["route"] if owner(opt.value) is None]
-    return generic if generic else options["route"]
+    return [opt for opt in options["route"] if opt.value.startswith(map_key)]
 
 
 def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False):
