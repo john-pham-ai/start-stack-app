@@ -2,7 +2,7 @@ import pyperclip
 import questionary
 from questionary import Choice
 
-from stack_options import build_command, load_options, routes_for_map_key
+from stack_options import build_command, load_options, map_keys_for_language, routes_for_map_key
 from translations import t
 
 BACK = object()
@@ -37,7 +37,10 @@ def ask_step(step, values, options):
         quit_label = t(lang, "quit")
     elif step == "map_key":
         message = t(lang, "map_key")
-        choices = choices_for(options, "map_key", optional=True, none_label=t(lang, "none_option"))
+        available_map_keys = map_keys_for_language(options, lang)
+        choices = choices_for(
+            options, "map_key", optional=True, opts_list=available_map_keys, none_label=t(lang, "none_option")
+        )
         quit_label = t(lang, "quit")
     elif step == "route":
         message = t(lang, "route")

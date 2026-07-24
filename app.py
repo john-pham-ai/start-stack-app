@@ -1,6 +1,6 @@
 from flask import Flask, render_template_string, request
 
-from stack_options import build_command, load_options
+from stack_options import build_command, load_options, map_keys_for_language
 from translations import t
 
 app = Flask(__name__)
@@ -137,6 +137,7 @@ def index():
     lang = request.values.get("lang", "en")
     if lang not in ("en", "ja"):
         lang = "en"
+    options["map_key"] = map_keys_for_language(options, lang)
     form = {
         "vehicle_name": options["vehicle_name"][0].value,
         "launch_config": options["launch_config"][0].value,
