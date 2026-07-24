@@ -1,0 +1,45 @@
+field,value,nickname
+vehicle_name,truck-801,
+vehicle_name,truck-802,
+vehicle_name,truck-803,
+vehicle_name,truck-804,
+vehicle_name,truck-805,
+vehicle_name,truck-806,
+vehicle_name,truck-807,
+vehicle_name,truck-808,
+vehicle_name,truck-809,
+vehicle_name,truck-810,
+vehicle_name,truck-811,
+vehicle_name,truck-812,
+vehicle_name,truck-813,
+vehicle_name,truck-814,
+vehicle_name,truck-815,
+vehicle_name,truck-816,
+vehicle_name,truck-817,
+vehicle_name,truck-818,
+vehicle_name,truck-819,
+vehicle_name,truck-820,
+vehicle_name,truck-821,
+vehicle_name,truck-822,
+vehicle_name,truck-823,
+vehicle_name,truck-824,
+vehicle_name,truck-825,
+vehicle_name,truck-826,
+vehicle_name,truck-827,
+vehicle_name,truck-828,
+vehicle_name,truck-829,
+vehicle_name,truck-830,
+launch_config,etc_sds_road_readiness,
+launch_config,sds_road_readiness,
+launch_config,secondary_road_readiness,
+launch_config,mrm_arbiter_integration_test,
+map_key,shirosato_zone_54,Shirosato Zone 54 (Main)
+map_key,shirosato_zone_12,Shirosato Zone 12
+map_key,shirosato_zone_88,
+map_key,tsukuba_test_track,Tsukuba Test Track
+map_key,narita_industrial_park,
+route,shoreline_terminal_10kph,Shoreline Terminal - Slow
+route,shoreline_terminal_25kph,Shoreline Terminal - Fast
+route,mountain_pass_35kph,Mountain Pass
+route,downtown_loop_20kph,Downtown Loop
+route,harbor_bridge_15kph,
