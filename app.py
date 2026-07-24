@@ -57,13 +57,27 @@ PAGE = """
     var mapSelect = document.getElementById("map_key");
     var routeSelect = document.getElementById("route");
     var allRouteOptions = Array.prototype.slice.call(routeSelect.options);
+    var allMapKeys = Array.prototype.slice.call(mapSelect.options)
+      .map(function (opt) { return opt.value; })
+      .filter(function (v) { return v !== ""; });
+
+    // A route "owned" by a map_key (value prefixed with that map_key's value)
+    // only shows up for that map_key; unprefixed routes are generic and show
+    // up for every map_key.
+    function ownerOf(routeValue) {
+      for (var i = 0; i < allMapKeys.length; i++) {
+        if (routeValue.indexOf(allMapKeys[i]) === 0) return allMapKeys[i];
+      }
+      return null;
+    }
 
     function applyFilter() {
       var mapKey = mapSelect.value;
-      var matching = allRouteOptions.filter(function (opt) {
-        return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
+      var visible = !mapKey ? allRouteOptions : allRouteOptions.filter(function (opt) {
+        if (opt.value === "") return true;
+        var owner = ownerOf(opt.value);
+        return owner === null || owner === mapKey;
       });
-      var visible = mapKey && matching.length ? matching : allRouteOptions;
       var previousValue = routeSelect.value;
 
       routeSelect.innerHTML = "";

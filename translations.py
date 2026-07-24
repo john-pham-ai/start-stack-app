@@ -16,6 +16,11 @@ TRANSLATIONS = {
     "language_prompt": {"en": "Language / 言語", "ja": "Language / 言語"},
     "copied_clipboard": {"en": "(copied to clipboard)", "ja": "（クリップボードにコピーしました）"},
     "could_not_copy": {"en": "(could not copy to clipboard)", "ja": "（クリップボードにコピーできませんでした）"},
+    "back": {"en": "<< Back", "ja": "<< 戻る"},
+    "quit": {"en": "Quit", "ja": "終了"},
+    "yes": {"en": "Yes", "ja": "はい"},
+    "no": {"en": "No", "ja": "いいえ"},
+    "cancelled": {"en": "Cancelled.", "ja": "キャンセルしました。"},
 }
 
 
