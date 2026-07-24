@@ -8,7 +8,7 @@ from translations import t
 BACK = object()
 QUIT = object()
 
-STEPS = ["language", "vehicle_name", "launch_config", "map_key", "route", "enable_japan_driving", "local"]
+STEPS = ["language", "vehicle_name", "launch_config", "map_key", "route", "enable_japan_driving"]
 
 
 def choices_for(options, field, optional=False, opts_list=None, none_label="-- none --"):
@@ -45,7 +45,7 @@ def ask_step(step, values, options):
             options, "route", optional=True, opts_list=filtered_routes, none_label=t(lang, "none_option")
         )
         quit_label = t(lang, "quit")
-    else:  # enable_japan_driving, local
+    else:  # enable_japan_driving
         message = t(lang, step)
         choices = [Choice(title=t(lang, "yes"), value=True), Choice(title=t(lang, "no"), value=False)]
         quit_label = t(lang, "quit")
@@ -79,7 +79,6 @@ def main():
         map_key=values["map_key"],
         route=values["route"],
         enable_japan_driving=values["enable_japan_driving"],
-        local=values["local"],
     )
 
     lang = values["language"]

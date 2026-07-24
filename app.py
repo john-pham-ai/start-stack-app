@@ -43,7 +43,6 @@ PAGE = """
     </select>
   </label>
   <label><input type="checkbox" name="enable_japan_driving" {% if form.enable_japan_driving %}checked{% endif %}> {{ t(lang, 'enable_japan_driving') }}</label>
-  <label><input type="checkbox" name="local" {% if form.local %}checked{% endif %}> {{ t(lang, 'local') }}</label>
   <button type="submit">{{ t(lang, 'build_command') }}</button>
 </form>
 {% if command %}
@@ -63,7 +62,7 @@ PAGE = """
 
     // A route "owned" by a map_key (value prefixed with that map_key's value)
     // only shows up for that map_key; unprefixed routes are generic and show
-    // up for every map_key.
+    // up for every map_key that has no owned routes of its own.
     function ownerOf(routeValue) {
       for (var i = 0; i < allMapKeys.length; i++) {
         if (routeValue.indexOf(allMapKeys[i]) === 0) return allMapKeys[i];
@@ -73,11 +72,21 @@ PAGE = """
 
     function applyFilter() {
       var mapKey = mapSelect.value;
-      var visible = !mapKey ? allRouteOptions : allRouteOptions.filter(function (opt) {
-        if (opt.value === "") return true;
-        var owner = ownerOf(opt.value);
-        return owner === null || owner === mapKey;
-      });
+      var visible;
+      if (!mapKey) {
+        visible = allRouteOptions;
+      } else {
+        var owned = allRouteOptions.filter(function (opt) {
+          return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
+        });
+        if (owned.length) {
+          visible = owned;
+        } else {
+          visible = allRouteOptions.filter(function (opt) {
+            return opt.value === "" || ownerOf(opt.value) === null;
+          });
+        }
+      }
       var previousValue = routeSelect.value;
 
       routeSelect.innerHTML = "";
@@ -158,7 +167,6 @@ def index():
         "map_key": "",
         "route": "",
         "enable_japan_driving": False,
-        "local": False,
     }
     command = None
     if request.method == "POST":
@@ -167,7 +175,6 @@ def index():
         form["map_key"] = request.form.get("map_key", "")
         form["route"] = request.form.get("route", "")
         form["enable_japan_driving"] = "enable_japan_driving" in request.form
-        form["local"] = "local" in request.form
         command = build_command(**form)
     return render_template_string(PAGE, options=options, form=form, command=command, lang=lang, t=t)
 

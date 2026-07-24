@@ -5,7 +5,6 @@ TRANSLATIONS = {
     "map_key": {"en": "map_key (optional)", "ja": "マップキー（map_key・任意）"},
     "route": {"en": "route (optional)", "ja": "ルート（route・任意）"},
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
-    "local": {"en": "local", "ja": "ローカル実行（local）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
     "build_command": {"en": "Build command", "ja": "コマンドを作成"},
     "command_heading": {"en": "Command", "ja": "コマンド"},

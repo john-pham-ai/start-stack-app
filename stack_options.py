@@ -32,25 +32,30 @@ def load_options(csv_path=CSV_PATH):
 
 
 def routes_for_map_key(options, map_key):
-    """Show routes for the selected map_key plus routes not owned by any map_key.
+    """Restrict routes to the selected map_key's own routes, if it has any.
 
     A route is "owned" by a map_key if its value is prefixed with that
     map_key's value (e.g. crows_landing_cw_outer_loop is owned by
-    crows_landing). Owned routes only show up for their own map_key;
-    unprefixed routes are generic and show up for every map_key.
+    crows_landing). If the selected map_key owns routes, only those show
+    up. Otherwise, fall back to routes not owned by any map_key at all.
     """
     if not map_key:
         return options["route"]
+
+    owned = [opt for opt in options["route"] if opt.value.startswith(map_key)]
+    if owned:
+        return owned
+
     map_key_values = [opt.value for opt in options["map_key"]]
 
     def owner(route_value):
         return next((v for v in map_key_values if route_value.startswith(v)), None)
 
-    visible = [opt for opt in options["route"] if owner(opt.value) in (None, map_key)]
-    return visible if visible else options["route"]
+    generic = [opt for opt in options["route"] if owner(opt.value) is None]
+    return generic if generic else options["route"]
 
 
-def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False, local=False):
+def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False):
     parts = ["start_stack", "--vehicle_name", vehicle_name, "--launch_config", launch_config]
     if map_key:
         parts += ["--map_key", map_key]
@@ -58,6 +63,4 @@ def build_command(vehicle_name, launch_config, map_key="", route="", enable_japa
         parts += ["--route", route]
     if enable_japan_driving:
         parts.append("--enable_japan_driving")
-    if local:
-        parts.append("--local")
     return " ".join(parts)
