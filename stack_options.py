@@ -4,13 +4,13 @@ from collections import namedtuple
 
 CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "options.csv")
 
-Option = namedtuple("Option", ["value", "label"])
+Option = namedtuple("Option", ["value", "label", "owner"])
 
 DEFAULT_OPTIONS = {
-    "vehicle_name": [Option("truck-807", "truck-807")],
-    "launch_config": [Option("sds_road_readiness", "sds_road_readiness")],
-    "map_key": [Option("shirosato_zone_54", "shirosato_zone_54")],
-    "route": [Option("shoreline_terminal_10kph", "shoreline_terminal_10kph")],
+    "vehicle_name": [Option("truck-807", "truck-807", "")],
+    "launch_config": [Option("sds_road_readiness", "sds_road_readiness", "")],
+    "map_key": [Option("shirosato_zone_54", "shirosato_zone_54", "")],
+    "route": [Option("shoreline_terminal_10kph", "shoreline_terminal_10kph", "")],
 }
 
 FIELDS = ["vehicle_name", "launch_config", "map_key", "route"]
@@ -23,8 +23,9 @@ def load_options(csv_path=CSV_PATH):
             for row in csv.DictReader(f):
                 field, value = row.get("field"), row.get("value")
                 nickname = (row.get("nickname") or "").strip()
+                owner = (row.get("owner_map_key") or "").strip()
                 if field in options and value:
-                    options[field].append(Option(value, nickname or value))
+                    options[field].append(Option(value, nickname or value, owner))
     for field in FIELDS:
         if not options[field]:
             options[field] = DEFAULT_OPTIONS[field]
@@ -32,16 +33,14 @@ def load_options(csv_path=CSV_PATH):
 
 
 def routes_for_map_key(options, map_key):
-    """Restrict routes to only those tied to the selected map_key.
+    """Restrict routes to only those whose owner_map_key is the selected map_key.
 
-    A route is tied to a map_key if its value is prefixed with that
-    map_key's value (e.g. crows_landing_cw_outer_loop is tied to
-    crows_landing). Routes with no matching map_key never show up once a
-    map_key is selected.
+    Routes with no owner, or a different owner, never show up once a
+    map_key is selected (see the owner_map_key column in options.csv).
     """
     if not map_key:
         return options["route"]
-    return [opt for opt in options["route"] if opt.value.startswith(map_key)]
+    return [opt for opt in options["route"] if opt.owner == map_key]
 
 
 def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False):

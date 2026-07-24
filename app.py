@@ -39,7 +39,7 @@ PAGE = """
   <label>{{ t(lang, 'route') }}
     <select name="route" id="route">
       <option value="">{{ t(lang, 'none_option') }}</option>
-      {% for opt in options.route %}<option value="{{ opt.value }}" {% if opt.value == form.route %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
+      {% for opt in options.route %}<option value="{{ opt.value }}" data-owner="{{ opt.owner }}" {% if opt.value == form.route %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
     </select>
   </label>
   <label><input type="checkbox" name="enable_japan_driving" {% if form.enable_japan_driving %}checked{% endif %}> {{ t(lang, 'enable_japan_driving') }}</label>
@@ -57,11 +57,11 @@ PAGE = """
     var routeSelect = document.getElementById("route");
     var allRouteOptions = Array.prototype.slice.call(routeSelect.options);
 
-    // Routes only show up for the map_key they're tied to (prefix match).
+    // Routes only show up for the map_key they're tied to (data-owner attribute).
     function applyFilter() {
       var mapKey = mapSelect.value;
       var visible = !mapKey ? allRouteOptions : allRouteOptions.filter(function (opt) {
-        return opt.value !== "" && opt.value.indexOf(mapKey) === 0;
+        return opt.value !== "" && opt.dataset.owner === mapKey;
       });
       var previousValue = routeSelect.value;
 
@@ -142,7 +142,7 @@ def index():
         "launch_config": options["launch_config"][0].value,
         "map_key": "",
         "route": "",
-        "enable_japan_driving": False,
+        "enable_japan_driving": lang == "ja",
     }
     command = None
     if request.method == "POST":

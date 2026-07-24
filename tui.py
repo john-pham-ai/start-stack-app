@@ -21,6 +21,7 @@ def choices_for(options, field, optional=False, opts_list=None, none_label="-- n
 
 def ask_step(step, values, options):
     lang = values.get("language", "en")
+    default = None
 
     if step == "language":
         message = t("en", "language_prompt")
@@ -49,12 +50,13 @@ def ask_step(step, values, options):
         message = t(lang, step)
         choices = [Choice(title=t(lang, "yes"), value=True), Choice(title=t(lang, "no"), value=False)]
         quit_label = t(lang, "quit")
+        default = lang == "ja"
 
     nav = [Choice(title=quit_label, value=QUIT)]
     if step != "language":
         nav.insert(0, Choice(title=t(lang, "back"), value=BACK))
 
-    answer = questionary.select(message, choices=choices + nav).ask()
+    answer = questionary.select(message, choices=choices + nav, default=default).ask()
     return QUIT if answer is None else answer
 
 
