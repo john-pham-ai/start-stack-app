@@ -13,7 +13,7 @@ QUIT = object()
 
 STEPS = ["language", "vehicle_name", "launch_config", "map_key", "route", "enable_japan_driving"]
 
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tui_state.json")
+STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")
 
 PINNED_LAUNCH_CONFIG = {"en": ["sds_road_readiness"], "ja": ["etc_sds_road_readiness"]}
 PINNED_MAP_KEY = {"en": ["sunnyvale_office", "usa_zone_10"], "ja": ["jp_zone_53", "jp_zone_54"]}
