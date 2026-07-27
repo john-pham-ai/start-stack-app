@@ -2,6 +2,8 @@
 
 *[English version here](README.md)*
 
+*コードを書いたことがない方向けに、スクリーンショット付きの平易な解説 [GETTING_STARTED.md](GETTING_STARTED.md)（英語）もあります。*
+
 `start_stack` の起動コマンドをフラグを覚えずに組み立てるためのローカルツールです。同じオプションとロジックを共有する2つのインターフェースがあります。
 
 - **Web UI**（Flask）— コマンドを組み立ててコピーできる画面

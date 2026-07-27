@@ -2,6 +2,8 @@
 
 *[日本語版はこちら](README.ja.md)*
 
+*New to this tool, or don't write code? See [GETTING_STARTED.md](GETTING_STARTED.md) — a plain-language walkthrough with screenshots.*
+
 A small local tool for building the `start_stack` launch command without memorizing flags. It ships two interfaces that share the same options and logic:
 
 - a **web UI** (Flask) you build the command in and copy out, and
