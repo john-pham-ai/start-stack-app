@@ -1,11 +1,12 @@
-import json
 import os
 
 import pyperclip
 import questionary
 from questionary import Choice
 
+import recorder
 from stack_options import build_command, load_options, map_keys_for_language, routes_for_map_key
+from state import load_state, save_state
 from translations import t
 
 BACK = object()
@@ -13,25 +14,8 @@ QUIT = object()
 
 STEPS = ["language", "vehicle_name", "launch_config", "map_key", "route", "enable_japan_driving"]
 
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")
-
 PINNED_LAUNCH_CONFIG = {"en": ["sds_road_readiness"], "ja": ["etc_sds_road_readiness"]}
 PINNED_MAP_KEY = {"en": ["sunnyvale_office", "usa_zone_10"], "ja": ["jp_zone_53", "jp_zone_54"]}
-
-
-def load_state(path=STATE_PATH):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_state(state, path=STATE_PATH):
-    with open(path, "w") as f:
-        json.dump(state, f, indent=2)
 
 
 def choices_for(options, field, optional=False, opts_list=None, none_label="-- none --"):
@@ -70,6 +54,31 @@ def ask_vehicle_name(lang, state, current_value=None):
     if answer.lower() == "quit":
         return QUIT
     return f"truck-{answer}"
+
+
+def ask_run_id_and_test_case(lang, state):
+    """Ask for the run id, then the Polarion test case id.
+
+    Typing 'back' at the test case prompt returns to the run id prompt;
+    typing 'skip' (or leaving it blank) means no test case id. The skip
+    choice is remembered in state so it's the default next time.
+    """
+    recording_state = state.setdefault("recording", {})
+    run_id = ""
+    while True:
+        answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
+        run_id = (answer or "").strip()
+
+        skip_default = recording_state.get("skip_polarion", False)
+        default_tc = "skip" if skip_default else recording_state.get("last_test_case_id", "")
+        tc_answer = questionary.text(t(lang, "test_case_prompt"), default=default_tc).ask()
+        tc_answer = (tc_answer or "").strip()
+
+        if tc_answer.lower() == "back":
+            continue
+        if tc_answer.lower() == "skip" or tc_answer == "":
+            return run_id, "", True
+        return run_id, tc_answer, False
 
 
 def ask_step(step, values, options, state):
@@ -157,6 +166,59 @@ def main():
         print(t(lang, "copied_clipboard") + "\n")
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
+
+    if not recorder.ensure_ffmpeg():
+        print(t(lang, "ffmpeg_missing") + "\n")
+    else:
+        should_finalize = False
+        with recorder.keypress_mode():
+            if recorder.wait_for_start(t(lang, "record_prompt")):
+                try:
+                    recording = recorder.ScreenRecording()
+                    recording.start()
+                except recorder.RecordingError as exc:
+                    print(t(lang, "record_failed") + " " + str(exc) + "\n")
+                else:
+                    print(t(lang, "record_started") + "\n")
+                    try:
+                        recorder.wait_for_stop(
+                            recording, label=t(lang, "recording_label"), hint=t(lang, "press_s_to_stop")
+                        )
+                    finally:
+                        recording.stop()
+
+                    if recorder.wait_for_keep_or_discard(t(lang, "keep_or_discard_prompt")):
+                        should_finalize = True
+                    else:
+                        recording.discard()
+                        print(t(lang, "recording_discarded") + "\n")
+
+        if should_finalize:
+            run_id, test_case_id, skipped_polarion = ask_run_id_and_test_case(lang, state)
+            video_path, sidecar_path = recording.finalize(
+                vehicle_name=values["vehicle_name"],
+                run_id=run_id,
+                test_case_id=test_case_id,
+                metadata={
+                    "command": command,
+                    "launch_config": values["launch_config"],
+                    "map_key": values["map_key"],
+                    "route": values["route"],
+                    "enable_japan_driving": values["enable_japan_driving"],
+                },
+            )
+
+            state["recording"]["skip_polarion"] = skipped_polarion
+            if not skipped_polarion and test_case_id:
+                state["recording"]["last_test_case_id"] = test_case_id
+            save_state(state)
+
+            print(t(lang, "recording_saved") + " " + video_path)
+            print(sidecar_path)
+            print(recorder.hyperlink(os.path.dirname(video_path), label=t(lang, "open_folder")) + "\n")
+            url = recorder.polarion_url(test_case_id)
+            if url:
+                print(t(lang, "polarion_link") + " " + url + "\n")
 
 
 if __name__ == "__main__":

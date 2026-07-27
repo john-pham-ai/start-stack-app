@@ -54,11 +54,13 @@ def map_keys_for_language(options, lang):
 
 
 def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False):
-    parts = ["start_stack", "--vehicle_name", vehicle_name, "--launch_config", launch_config]
+    args = [f"--vehicle_name {vehicle_name}", f"--launch_config {launch_config}"]
     if map_key:
-        parts += ["--map_key", map_key]
+        args.append(f"--map_key {map_key}")
     if route:
-        parts += ["--route", route]
+        args.append(f"--route {route}")
     if enable_japan_driving:
-        parts.append("--enable_japan_driving")
-    return " ".join(parts)
+        args.append("--enable_japan_driving")
+    # Line-break before each flag with a trailing backslash, so the command
+    # stays valid to paste into a shell but reads one flag per line.
+    return " \\\n  ".join(["start_stack"] + args)

@@ -7,28 +7,34 @@
 - **Web UI**（Flask）— コマンドを組み立ててコピーできる画面
 - **TUI**（ターミナルウィザード）— コマンドラインだけで操作できる対話形式
 
-どちらも次の形のコマンドを組み立てます。
+どちらも次の形のコマンドを組み立てます — 各フラグが1行ずつ改行され、行末に `\` が付くので、シェルに貼り付けても1つのコマンドとして実行できます。
 
 ```
-start_stack --vehicle_name truck-807 --launch_config sds_road_readiness [--map_key shirosato_zone_54] [--route shoreline_terminal_10kph] [--enable_japan_driving]
+start_stack \
+  --vehicle_name truck-807 \
+  --launch_config sds_road_readiness \
+  --map_key shirosato_zone_54 \
+  --route shoreline_terminal_10kph \
+  --enable_japan_driving
 ```
 
-`map_key`・`route`・`enable_japan_driving` は任意項目、`vehicle_name` と `launch_config` は必須項目です。
+`map_key`・`route`・`enable_japan_driving` は任意項目です（未設定の場合はコマンドから丸ごと省かれます）。`vehicle_name` と `launch_config` は必須項目です。
 
 ## セットアップ
 
-初回実行には `flask`・`questionary`・`pyperclip` をインストールした Python の仮想環境が必要です。2つの起動スクリプトはどちらもこれを自動で行います — `venv/` がまだ無ければ作成し、起動前に `pip install -r requirements.txt` を実行します。
+初回実行には `flask`・`questionary`・`pyperclip` をインストールした Python の仮想環境が必要です。3つの起動スクリプトはどれもこれを自動で行います — `venv/` がまだ無ければ作成し、起動前に `pip install -r requirements.txt` を実行します。
 
 ## 実行方法
 
 プロジェクトディレクトリで以下を実行します。
 
 ```
-./run.sh       # Web UI。起動後 http://127.0.0.1:5050 を開く
-./launch.sh    # ターミナルウィザード
+./run.sh        # Web UI。起動後 http://127.0.0.1:5050 を開く
+./launch.sh     # ターミナルウィザード
+./recorder.sh   # コマンドウィザードなしで画面録画だけ行う
 ```
 
-初めて `./launch.sh` を実行すると、シェルの設定ファイルに `launch` エイリアスが自動的に追加されます（zsh の場合は `.zshrc`、bash の場合は macOS では `.bash_profile`、Linux では `.bashrc`/`.bash_aliases`）。これにより、以降はこのディレクトリに移動しなくても、どこからでも `launch` と入力するだけで起動できます。エイリアスを有効にするには、新しいターミナルを開くか、表示されたファイルを `source` してください。シェルを自動検出できなかった場合は、自分で追加すべきエイリアスの行がそのまま表示されます。
+初めて `./launch.sh` を実行すると、シェルの設定ファイルに `launch` エイリアスが自動的に追加されます（zsh の場合は `.zshrc`、bash の場合は macOS では `.bash_profile`、Linux では `.bashrc`/`.bash_aliases`）。これにより、以降はこのディレクトリに移動しなくても、どこからでも `launch` と入力するだけで起動できます。`./recorder.sh` も同様に `recorder` エイリアスを追加します。エイリアスを有効にするには、新しいターミナルを開くか、表示されたファイルを `source` してください。シェルを自動検出できなかった場合は、自分で追加すべきエイリアスの行がそのまま表示されます。
 
 ## Web UI
 
@@ -56,6 +62,30 @@ start_stack --vehicle_name truck-807 --launch_config sds_road_readiness [--map_k
 ### 前回の選択を記憶します
 
 車両番号・起動設定・マップキーの選択内容はローカルの `.launch_state.json`（gitでは管理されません）に保存され、次回 `./launch.sh` を実行したときにデフォルト値として表示されます。変更したくない項目はそのまま Enter を押すだけで構いません。起動設定とマップキーは **言語ごとに別々に** 記憶されます（English での前回選択と日本語での前回選択はそれぞれ独立して保持されます）。この保存は最後まで完了した実行の後にのみ行われ、途中で終了した場合は何も保存されません。
+
+## 画面録画
+
+コマンドが作成されクリップボードにコピーされた後、この実行の画面を録画するかどうか尋ねられます。これには `ffmpeg` が必要ですが、インストールされていない場合はウィザードが自動的にインストールします（macOS では Homebrew、Linux では見つかった apt・dnf・pacman のいずれかを使用）。利用可能なパッケージマネージャーが無い場合や、インストールに失敗した場合は録画がスキップされ、`ffmpeg` を手動でインストールするよう案内されます。
+
+全体はキー1つで操作します（テキスト入力の場面以外は Enter 不要です）：
+
+1. **`r`** を押すと録画開始、**`q`** を押すと録画をせずにスキップします。
+2. 録画が始まると、ターミナルには `● Recording... 00:07 (press 's' to stop)` のように1秒ごとに増えるタイマー表示が出るので、実際に録画中であることが分かります。テストを実行し、終わったら **`s`** を押して停止してください。
+3. **保存するか破棄するか** を聞かれます。**`k`** を押せば保存して続行、**`d`** を押せばその場でファイルを削除して終了します（名前の入力プロンプトには進みません）。
+4. 保存を選んだ場合、**run-id** の入力を求められます（任意 — 空欄のまま Enter でスキップできます）。
+5. **Polarion のテストケース ID** の入力を求められます。ID を入力するか、次のいずれかを入力できます。
+   - `back` — run-id の入力からやり直す
+   - `skip`（または何も入力せず Enter）— このテストケース ID は無しにする
+6. 動画は `~/screen_recordings/<今日の日付>/` に `<タイムスタンプ>_<vehicle_name>_run-<run-id>_tc-<テストケース ID>.mp4` という名前で保存されます（スキップした項目は名前から省かれます）。同名の `.json` サイドカーファイルには、run-id・テストケース ID・Polarion リンク・`start_stack` コマンド・録画時間が記録されます。
+7. その直後に **「録画フォルダを開く」** というリンクが表示されます。クリックできるリンクに対応したターミナル（iTerm2・VS Code・kitty・最近の Terminal.app など）であれば、クリックするだけでその日付のフォルダを Finder で直接開けます。フォルダの実際のパスもその上に必ず表示されます。
+
+テストケース ID のプロンプトで `skip` を選ぶと、その選択が記憶され、次回の録画でもデフォルトで `skip` になります（毎回断る必要はありません）。実際のテストケース ID を入力すると、デフォルトはそちらに切り替わります。
+
+Polarion リンクは `recorder.py` 内の URL テンプレート（`POLARION_URL_TEMPLATE`、または環境変数 `POLARION_URL_TEMPLATE`）から組み立てられます — 実際の Polarion サーバーを指すように編集してください（プレースホルダーのままでは実在するリンクになりません）。録画の保存先も環境変数 `RECORDINGS_DIR` で変更できます（デフォルトは `~/screen_recordings`）。
+
+### コマンドウィザードなしで録画する
+
+`start_stack` コマンドを組み立てずに録画だけしたい場合は、`./recorder.sh`（エイリアス設定後は `recorder`）を実行してください。上記と同じ `r` で開始・`s` で停止・保存または破棄・名前入力の流れにそのまま進みます（動画ファイル名に車両名が含まれない点だけが異なります）。`skip` の記憶や前回のテストケース ID は、通常のウィザードと共通の状態として扱われます。
 
 ## オプションの編集
 
