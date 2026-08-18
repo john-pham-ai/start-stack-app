@@ -2,6 +2,8 @@ import csv
 import os
 from collections import namedtuple
 
+from brain2_routes import load_map_and_route_options
+
 CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "options.csv")
 
 Option = namedtuple("Option", ["value", "label", "owner", "language"])
@@ -9,35 +11,36 @@ Option = namedtuple("Option", ["value", "label", "owner", "language"])
 DEFAULT_OPTIONS = {
     "vehicle_name": [Option("truck-807", "truck-807", "", "")],
     "launch_config": [Option("sds_road_readiness", "sds_road_readiness", "", "")],
-    "map_key": [Option("shirosato_zone_54", "shirosato_zone_54", "", "")],
-    "route": [Option("shoreline_terminal_10kph", "shoreline_terminal_10kph", "", "")],
 }
 
-FIELDS = ["vehicle_name", "launch_config", "map_key", "route"]
+CSV_FIELDS = ["vehicle_name", "launch_config"]
+FIELDS = CSV_FIELDS + ["map_key", "route"]
 
 
 def load_options(csv_path=CSV_PATH):
-    options = {field: [] for field in FIELDS}
+    options = {field: [] for field in CSV_FIELDS}
     if os.path.exists(csv_path):
         with open(csv_path, newline="") as f:
             for row in csv.DictReader(f):
                 field, value = row.get("field"), row.get("value")
                 nickname = (row.get("nickname") or "").strip()
-                owner = (row.get("owner_map_key") or "").strip()
-                language = (row.get("language") or "").strip()
                 if field in options and value:
-                    options[field].append(Option(value, nickname or value, owner, language))
-    for field in FIELDS:
+                    options[field].append(Option(value, nickname or value, "", ""))
+    for field in CSV_FIELDS:
         if not options[field]:
             options[field] = DEFAULT_OPTIONS[field]
+
+    # map_key/route are not curated in options.csv - they're scanned live from
+    # brain2's route definitions every time the tool launches.
+    options.update(load_map_and_route_options())
     return options
 
 
 def routes_for_map_key(options, map_key):
-    """Restrict routes to only those whose owner_map_key is the selected map_key.
+    """Restrict routes to only those whose owner map is the selected map_key.
 
     Routes with no owner, or a different owner, never show up once a
-    map_key is selected (see the owner_map_key column in options.csv).
+    map_key is selected.
     """
     if not map_key:
         return options["route"]
@@ -45,18 +48,16 @@ def routes_for_map_key(options, map_key):
 
 
 def map_keys_for_language(options, lang):
-    """Restrict map_keys to those available for the given UI language.
+    """Return the available map_keys.
 
-    A blank language means the map_key is available for every UI language
-    (see the language column in options.csv).
+    map_key options are sourced live from brain2 and carry no per-language
+    restriction, so every map is available regardless of UI language.
     """
-    return [opt for opt in options["map_key"] if not opt.language or opt.language == lang]
+    return options["map_key"]
 
 
-def build_command(vehicle_name, launch_config, map_key="", route="", enable_japan_driving=False):
+def build_command(vehicle_name, launch_config, route="", enable_japan_driving=False):
     args = [f"--vehicle_name {vehicle_name}", f"--launch_config {launch_config}"]
-    if map_key:
-        args.append(f"--map_key {map_key}")
     if route:
         args.append(f"--route {route}")
     if enable_japan_driving:

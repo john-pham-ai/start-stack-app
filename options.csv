@@ -33,35 +33,3 @@ launch_config,etc_sds_road_readiness,,,
 launch_config,sds_road_readiness,,,
 launch_config,secondary_road_readiness,,,
 launch_config,mrm_arbiter_integration_test,,,
-map_key,crows_landing,,,en
-map_key,jp_tokyo,,,ja
-map_key,jp_zone_53,,,ja
-map_key,jp_zone_54,,,ja
-map_key,shirosato_zone_54,Shirosato Zone 54 (Main),,ja
-map_key,shirosato_reversed_zone_54,,,ja
-map_key,sunnyvale_office,,,en
-map_key,usa_zone_10,,,en
-map_key,walnut_creek,,,en
-map_key,shoreline_zone_10,,,en
-route,shoreline_terminal_10kph,Shoreline Terminal - Slow,shoreline_zone_10,
-route,shoreline_terminal_25kph,Shoreline Terminal - Fast,,
-route,mountain_pass_35kph,Mountain Pass,,
-route,downtown_loop_20kph,Downtown Loop,,
-route,harbor_bridge_15kph,,,
-route,crows_landing_anticw_inner_loop,,crows_landing,
-route,crows_landing_anticw_merge_in_loop,,crows_landing,
-route,crows_landing_anticw_outer_loop,,crows_landing,
-route,crows_landing_cw_inner_lc_loop,,crows_landing,
-route,crows_landing_cw_inner_loop,,crows_landing,
-route,crows_landing_cw_outer_lc_loop,,crows_landing,
-route,crows_landing_cw_outer_loop,,crows_landing,
-route,sunnyvale_office_inner_10kph,,sunnyvale_office,
-route,sunnyvale-us101-rengstorff-ave-northbound,,usa_zone_10,
-route,sunnyvale-us101-rengstorff-ave-southbound,,usa_zone_10,
-route,sunnyvale_i280_ca92,,usa_zone_10,
-route,whisman_92_loop,,usa_zone_10,
-route,gomentum_b_bidirectional_east,,walnut_creek,
-route,gomentum_b_bidirectional_east_and_west,,walnut_creek,
-route,gomentum_b_bidirectional_west,,walnut_creek,
-route,gomentum_b_crosswalk_go_north_turn_left,,walnut_creek,
-route,shoreline_straight,,shoreline_zone_10,

@@ -152,7 +152,12 @@ def index():
         form["map_key"] = request.form.get("map_key", "")
         form["route"] = request.form.get("route", "")
         form["enable_japan_driving"] = "enable_japan_driving" in request.form
-        command = build_command(**form)
+        command = build_command(
+            vehicle_name=form["vehicle_name"],
+            launch_config=form["launch_config"],
+            route=form["route"],
+            enable_japan_driving=form["enable_japan_driving"],
+        )
     return render_template_string(PAGE, options=options, form=form, command=command, lang=lang, t=t)
 
 
