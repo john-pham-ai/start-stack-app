@@ -155,6 +155,7 @@ def main():
     command = build_command(
         vehicle_name=values["vehicle_name"],
         launch_config=values["launch_config"],
+        map_key=values["map_key"],
         route=values["route"],
         enable_japan_driving=values["enable_japan_driving"],
     )
