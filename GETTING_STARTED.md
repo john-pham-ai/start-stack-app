@@ -115,7 +115,7 @@ On Linux, the first recording may show a similar screen-sharing approval popup �
 No — most questions offer a **`<< Back`** option in the list, or (for typed answers) you can type `back`.
 
 **What's a preset?**
-A saved set of answers (vehicle, config, map, route, and the Japan driving toggle) under a name you choose. When a new truck or route is what you build every morning, save it once and rebuild it with two key presses after that.
+A saved set of answers (vehicle, config, route, and the Japan driving toggle) under a name you choose — or, since you can also save a **custom command** as a preset, any raw command you paste in. Using a preset is one pick: the command comes out, lands on your clipboard automatically, and you're done — no questions asked. To get rid of one you don't use anymore, pick **Remove a preset** on the first menu (or, on the web page, select it and click the remove button).
 
 **I don't have a Polarion test case id yet — is that okay?**
 Yes, just type `skip` or press Enter past that question. Nothing about the recording depends on having one.
