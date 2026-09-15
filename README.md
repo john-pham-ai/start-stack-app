@@ -84,7 +84,7 @@ The whole thing is driven by single keypresses — no Enter needed except at the
 1. Press **`r`** to start recording, or **`q`** to skip it entirely.
 2. Once started, the terminal shows a live `● Recording... 00:07 (press 's' to stop)` line that ticks up every second so you can tell it's actually running. Perform your test run, then press **`s`** to stop.
 3. You're asked **keep or discard**: press **`k`** to keep it and continue, or **`d`** to throw it away — the file is deleted immediately and you're done, no naming prompts.
-4. If you kept it, you're asked to paste a **run id** (optional — leave it blank to skip).
+4. If you kept it, you're asked to paste a **run id** (optional — leave it blank to skip, or type `truck` to fetch the latest run id off the cabled truck; it's printed first so you can sanity-check it, then one Enter accepts it).
 5. You're asked for a **Polarion test case id**. Type it, or:
    - `back` — re-enter the run id
    - `skip` (or just press Enter) — no test case id for this recording

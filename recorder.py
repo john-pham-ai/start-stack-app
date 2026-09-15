@@ -34,6 +34,8 @@ from datetime import datetime
 
 import questionary
 
+import truck
+
 from state import load_state, save_state
 from translations import t
 
@@ -601,12 +603,39 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
     return video_path, sidecar_path
 
 
+def fetch_truck_run_id(lang):
+    """Fetch the latest run id from the cabled truck (truck.py).
+
+    Prints what was fetched so the tester can sanity-check it before
+    accepting; on failure prints the readable error instead. Returns the
+    run id, or "" so the prompt comes back empty for a manual paste.
+    """
+    try:
+        info = truck.fetch_run_id()
+    except truck.TruckError as err:
+        print(t(lang, "truck_error_prefix") + " " + str(err) + "\n")
+        return ""
+
+    date = info.get("date", "")
+    header = " · ".join(part for part in (info["vehicle"], info["hostname"], date) if part)
+    print(header)
+    print("run_id: " + info["run_id"])
+    print("path:   " + info["path"])
+    if info.get("warning"):
+        print("⚠️  " + info["warning"])
+    print("")
+    return info["run_id"]
+
+
 def ask_run_id_and_test_case(lang, state):
     """Ask for the run id, then the Polarion test case id, updating state.
 
-    'back' at the test case prompt re-asks the run id; 'skip' (or leaving
-    it blank) means no test case id. The skip choice is remembered in state
-    so it's the default next time, as is the last test case id used.
+    Typing 'truck' at the run id prompt fetches the latest run id off the
+    cabled truck (see truck.py) and re-prompts with it as the default, so
+    one Enter accepts it. 'back' at the test case prompt re-asks the run
+    id; 'skip' (or leaving it blank) means no test case id. The skip choice
+    is remembered in state so it's the default next time, as is the last
+    test case id used.
 
     Returns (run_id, test_case_id, skipped_polarion).
     """
@@ -615,6 +644,9 @@ def ask_run_id_and_test_case(lang, state):
     while True:
         answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
         run_id = (answer or "").strip()
+        if run_id.lower() == "truck":
+            run_id = fetch_truck_run_id(lang)
+            continue  # re-prompt with the fetched id as the default
 
         skip_default = recording_state.get("skip_polarion", False)
         default_tc = "skip" if skip_default else recording_state.get("last_test_case_id", "")

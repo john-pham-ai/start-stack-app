@@ -50,8 +50,8 @@ TRANSLATIONS = {
     },
     "recording_discarded": {"en": "Recording discarded.", "ja": "録画を破棄しました。"},
     "run_id_prompt": {
-        "en": "Paste the run id (optional — press Enter to leave blank)",
-        "ja": "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ）",
+        "en": "Paste the run id (optional — press Enter to leave blank, or type 'truck' to fetch the latest from the truck)",
+        "ja": "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ、'truck' と入力するとトラックから最新を取得）",
     },
     "test_case_prompt": {
         "en": "Paste the Polarion test case id (type 'skip' for none, 'back' to re-enter the run id)",

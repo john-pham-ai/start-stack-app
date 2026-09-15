@@ -157,8 +157,75 @@ class TestAskRunIdAndTestCase:
         fake = FakeText(["run-42", "TC-1"])
         monkeypatch.setattr(recorder.questionary, "text", fake)
         ask_run_id_and_test_case("ja", {})
-        assert fake.messages[0] == "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ）"
+        assert fake.messages[0] == (
+            "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ、"
+            "'truck' と入力するとトラックから最新を取得）"
+        )
         assert "Polarion のテストケース ID" in fake.messages[1]
+
+    TRUCK_INFO = {
+        "vehicle": "805",
+        "run_id": "2026-09-15_14-48-57_truck-805",
+        "path": "/media/hotswap1/frontier/truck-805/2026/09/15/2026-09-15_14-48-57_truck-805",
+        "date": "2026/09/15",
+        "hostname": "truck-805-primarypc",
+        "warning": "",
+    }
+
+    def test_truck_fetches_latest_run_id(self, monkeypatch, capsys):
+        # Flow: type 'truck' at the run-id prompt, the fetch prints what it
+        # found, the prompt comes back with the fetched id as the default,
+        # and pressing Enter (the queued id) accepts it.
+        fake = FakeText(["truck", self.TRUCK_INFO["run_id"], "TC-9"])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
+        result = ask_run_id_and_test_case("en", {})
+        out = capsys.readouterr().out
+        assert "run_id: 2026-09-15_14-48-57_truck-805" in out
+        assert "/media/hotswap1/frontier/truck-805/" in out
+        assert fake.defaults[1] == "2026-09-15_14-48-57_truck-805"  # re-prompt default
+        assert result == ("2026-09-15_14-48-57_truck-805", "TC-9", False)
+
+    def test_truck_shows_the_fallback_warning(self, monkeypatch, capsys):
+        fake = FakeText(["truck", self.TRUCK_INFO["run_id"], "skip"])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(
+            recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO, warning="No runs today.")
+        )
+        result = ask_run_id_and_test_case("en", {})
+        assert "⚠️  No runs today." in capsys.readouterr().out  # shown, not hidden
+        assert result == ("2026-09-15_14-48-57_truck-805", "", True)
+
+    def test_truck_failure_re_prompts_for_manual_paste(self, monkeypatch, capsys):
+        def boom():
+            raise recorder.truck.TruckError("could not SSH to applied@192.168.1.11")
+
+        fake = FakeText(["truck", "manual-42", "TC-2"])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", boom)
+        result = ask_run_id_and_test_case("en", {})
+        out = capsys.readouterr().out
+        assert "Could not fetch the run id:" in out
+        assert "could not SSH" in out
+        assert fake.defaults[1] == ""  # the re-prompt came back empty
+        assert result == ("manual-42", "TC-2", False)
+
+    def test_truck_magic_word_is_case_insensitive(self, monkeypatch):
+        fake = FakeText(["TRUCK", self.TRUCK_INFO["run_id"], "TC-9"])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
+        assert ask_run_id_and_test_case("en", {})[0] == "2026-09-15_14-48-57_truck-805"
+
+    def test_back_after_fetch_re_prompts_with_fetched_id(self, monkeypatch):
+        # 'back' at the test-case prompt must keep the fetched id as the
+        # default of the run-id re-prompt, and Enter accepts it again.
+        fetched = self.TRUCK_INFO["run_id"]
+        fake = FakeText(["truck", fetched, "back", fetched, "skip"])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
+        result = ask_run_id_and_test_case("en", {})
+        assert fake.defaults[-2] == fetched  # the run-id re-prompt after 'back'
+        assert result == (fetched, "", True)
 
 
 class TestRecordingError:
