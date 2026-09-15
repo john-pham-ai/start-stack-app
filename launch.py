@@ -159,16 +159,19 @@ def save_custom_command_preset(state, lang):
 
 
 def run_custom_command(state, lang, loaded):
-    """Print a custom preset's command, put it on the clipboard, done.
+    """Print a custom preset's command and put it on the clipboard.
 
     The command is used verbatim — nothing is re-derived from wizard
-    fields. Reusing a preset is a pure re-grab: no prompts, no recording
-    offer (use "Record the screen only" for that).
+    fields. Like any other one-pick reuse, the same recording offer as a
+    hand-built command follows (r to record, q to skip); the vehicle name
+    for the recording's filename comes from the command itself, when it
+    carries one.
     """
     command = loaded.command
     print("\n" + command + "\n")
 
-    remember_command(state, command_entry_values(command), command, custom=True)
+    entry_values = command_entry_values(command)
+    remember_command(state, entry_values, command, custom=True)
     save_state(state)
 
     try:
@@ -176,6 +179,13 @@ def run_custom_command(state, lang, loaded):
         print(t(lang, "copied_clipboard") + "\n")
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
+
+    recorder.run_recording_flow(
+        lang,
+        state,
+        vehicle_name=entry_values.get("vehicle_name", ""),
+        metadata={"command": command},
+    )
 
 
 def run_truck_fetch(lang):
@@ -383,25 +393,25 @@ def main():
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
 
-    # Presets and recent commands are for re-grabbing a command fast:
-    # it's printed and on the clipboard, done — no recording offer. That
-    # offer (and the save-preset prompt above) belongs to hand-built
-    # commands; the menu's "Record the screen only" covers the rest.
-    if shortcut_values is None:
-        recorder.run_recording_flow(
-            lang,
-            state,
-            vehicle_name=values["vehicle_name"],
-            metadata={
-                "command": command,
-                "launch_config": values["launch_config"],
-                # The map isn't a command flag anymore — routes carry
-                # it — but it's still worth recording per run.
-                "map_key": map_key_for_route(options, values["route"]),
-                "route": values["route"],
-                "enable_japan_driving": values["enable_japan_driving"],
-            },
-        )
+    # The recording offer follows every command — hand-built or loaded
+    # from a preset/recent shortcut. The shortcut path already has all the
+    # wizard values (validated above), so the metadata is identical; the
+    # only thing a loaded preset skips is the save-preset prompt above,
+    # since it's by definition already saved.
+    recorder.run_recording_flow(
+        lang,
+        state,
+        vehicle_name=values["vehicle_name"],
+        metadata={
+            "command": command,
+            "launch_config": values["launch_config"],
+            # The map isn't a command flag anymore — routes carry
+            # it — but it's still worth recording per run.
+            "map_key": map_key_for_route(options, values["route"]),
+            "route": values["route"],
+            "enable_japan_driving": values["enable_japan_driving"],
+        },
+    )
 
 
 if __name__ == "__main__":

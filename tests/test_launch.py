@@ -208,15 +208,15 @@ class TestSaveCustomCommandPreset:
 
 
 class TestRunCustomCommand:
-    def test_prints_copies_records_done(self, monkeypatch, capsys):
+    def test_prints_copies_then_offers_recording(self, monkeypatch, capsys):
         import recorder
 
         flow_calls = []
 
-        def no_flow(*args, **kwargs):
+        def fake_flow(*args, **kwargs):
             flow_calls.append((args, kwargs))
 
-        monkeypatch.setattr(recorder, "run_recording_flow", no_flow)
+        monkeypatch.setattr(recorder, "run_recording_flow", fake_flow)
         monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
         monkeypatch.setattr(launch, "save_state", lambda state: None)
 
@@ -227,12 +227,32 @@ class TestRunCustomCommand:
         out = capsys.readouterr().out
         assert "start_stack --vehicle_name truck-807 --launch_config cfg" in out
         assert "（クリップボードにコピーしました）" in out
-        # Pure re-grab: no recording offer follows the copy.
-        assert flow_calls == []
+        # The reuse now offers the same recording flow as a hand-built
+        # command; the vehicle comes from the command itself.
+        assert len(flow_calls) == 1
+        args, kwargs = flow_calls[0]
+        assert args[0] == "ja"
+        assert kwargs["vehicle_name"] == "truck-807"
+        assert kwargs["metadata"] == {"command": "start_stack --vehicle_name truck-807 --launch_config cfg"}
         # History: custom flag on, vehicle derived from the command.
         entry = state["history"][0]
         assert entry["custom"] is True
         assert entry["vehicle_name"] == "truck-807"
+
+    def test_command_without_vehicle_passes_empty_vehicle(self, monkeypatch, capsys):
+        import recorder
+
+        flow_calls = []
+        monkeypatch.setattr(
+            recorder, "run_recording_flow", lambda *a, **kw: flow_calls.append(kw)
+        )
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        monkeypatch.setattr(launch, "save_state", lambda state: None)
+
+        launch.run_custom_command({}, "en", LoadedCommand("n", "my_tool --flag"))
+        out = capsys.readouterr().out
+        assert "my_tool --flag" in out
+        assert flow_calls == [{"vehicle_name": "", "metadata": {"command": "my_tool --flag"}}]
 
     def test_command_without_vehicle_still_works(self, monkeypatch, capsys):
         import recorder
@@ -440,8 +460,10 @@ class TestWizardEndToEnd:
         out = capsys.readouterr().out
         assert "start_stack --vehicle_name truck-815" in out
         assert "(copied to clipboard)" in out
-        # Pure re-grab: no recording offer after a preset pick.
-        assert flow_calls == []
+        # The reuse now offers recording; the vehicle comes from the command.
+        assert len(flow_calls) == 1
+        assert flow_calls[0]["vehicle_name"] == "truck-815"
+        assert flow_calls[0]["metadata"] == {"command": "start_stack --vehicle_name truck-815"}
         with open(state_module.STATE_PATH) as f:
             state = json.load(f)
         assert state["history"][0]["custom"] is True
@@ -499,8 +521,13 @@ class TestWizardEndToEnd:
         assert "--vehicle_name truck-815" in out
         assert "--launch_config sds_road_readiness" in out
         assert "(copied to clipboard)" in out
-        assert "Record the screen" not in out
-        assert flow_calls == []
+        assert "Record the screen" not in out  # the mocked flow prints nothing
+        # A loaded values preset gets the same recording offer, with the
+        # same metadata a hand-built command would carry.
+        assert len(flow_calls) == 1
+        assert flow_calls[0]["vehicle_name"] == "truck-815"
+        assert flow_calls[0]["metadata"]["launch_config"] == "sds_road_readiness"
+        assert flow_calls[0]["metadata"]["command"].startswith("start_stack")
         with open(state_module.STATE_PATH) as f:
             state = json.load(f)
         assert state["history"][0]["command"].startswith("start_stack")
