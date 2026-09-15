@@ -3,6 +3,7 @@ import questionary
 from questionary import Choice
 
 import recorder
+import truck
 from stack_options import build_command, load_options, map_key_for_route
 from state import (
     CUSTOM_PRESET,
@@ -24,6 +25,7 @@ BACK = object()
 QUIT = object()
 NEW = object()  # "build a new command" on the start menu
 RECORD_ONLY = object()  # "record the screen only" on the start menu
+TRUCK_RUN = object()  # "fetch the latest run id from the truck" on the start menu
 SAVE_CUSTOM = object()  # "save a custom command as a preset" on the start menu
 REMOVE_PRESET = object()  # "remove a preset" on the start menu
 
@@ -116,6 +118,7 @@ def ask_start_menu(state, lang):
     choices = [
         Choice(title=t(lang, "start_new"), value=NEW),
         Choice(title=t(lang, "record_only"), value=RECORD_ONLY),
+        Choice(title=t(lang, "truck_run_menu"), value=TRUCK_RUN),
         Choice(title=t(lang, "save_custom_preset"), value=SAVE_CUSTOM),
     ]
     for name, entry in presets.items():
@@ -133,7 +136,7 @@ def ask_start_menu(state, lang):
     answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
     if answer is None or answer is QUIT:
         return QUIT
-    if answer in (NEW, RECORD_ONLY, SAVE_CUSTOM, REMOVE_PRESET):
+    if answer in (NEW, RECORD_ONLY, TRUCK_RUN, SAVE_CUSTOM, REMOVE_PRESET):
         return answer
 
     kind, key = answer
@@ -170,6 +173,34 @@ def run_custom_command(state, lang, loaded):
 
     try:
         pyperclip.copy(command)
+        print(t(lang, "copied_clipboard") + "\n")
+    except pyperclip.PyperclipException:
+        print(t(lang, "could_not_copy") + "\n")
+
+
+def run_truck_fetch(lang):
+    """Fetch the latest run id from the cabled truck, print it, copy it.
+
+    A fetch failure is printed and swallowed — it shouldn't kill the wizard,
+    which loops back to the start menu afterwards.
+    """
+    try:
+        info = truck.fetch_run_id()
+    except truck.TruckError as err:
+        print(t(lang, "truck_error_prefix") + " " + str(err) + "\n")
+        return
+
+    date = info.get("date", "")
+    header = " · ".join(part for part in (info["vehicle"], info["hostname"], date) if part)
+    print("\n" + header)
+    print("run_id: " + info["run_id"])
+    print("path:   " + info["path"])
+    if info.get("warning"):
+        print("⚠️  " + info["warning"])
+    print("")
+
+    try:
+        pyperclip.copy(info["run_id"])
         print(t(lang, "copied_clipboard") + "\n")
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
@@ -295,6 +326,9 @@ def main():
                 if menu is RECORD_ONLY:
                     recorder.run_recording_flow(values["language"], state)
                     return
+                if menu is TRUCK_RUN:
+                    run_truck_fetch(values["language"])
+                    continue
                 if menu is REMOVE_PRESET:
                     remove_preset(state, values["language"])
                     continue

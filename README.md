@@ -54,7 +54,7 @@ Run `./launch.sh` and answer each prompt with the arrow keys and Enter. Every sc
 Steps, in order:
 
 1. **Language** — English or 日本語. This affects every later step's wording plus the `enable_japan_driving` default (see below).
-2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); **Save a custom command as a preset** stores any raw command — one you didn't build here — under a name for verbatim reuse (leading `$` prompts and the multi-line `\` form are cleaned up automatically); saved presets and recent commands join the menu once they exist, for one-step rebuilds — picking one prints the command, puts it on your clipboard, and exits: no wizard steps, no further prompts (the recording offer belongs to hand-built commands and the record-only entry); **Remove a preset** (shown once you have presets) picks one, confirms, and deletes it — then brings the menu back. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
+2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); **Fetch the latest Run ID from the truck** grabs the newest run id off the cabled truck (see [Fetch the latest Run ID from the truck](#fetch-the-latest-run-id-from-the-truck)), puts it on your clipboard, and brings the menu back; **Save a custom command as a preset** stores any raw command — one you didn't build here — under a name for verbatim reuse (leading `$` prompts and the multi-line `\` form are cleaned up automatically); saved presets and recent commands join the menu once they exist, for one-step rebuilds — picking one prints the command, puts it on your clipboard, and exits: no wizard steps, no further prompts (the recording offer belongs to hand-built commands and the record-only entry); **Remove a preset** (shown once you have presets) picks one, confirms, and deletes it — then brings the menu back. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
 3. **Vehicle name** — type to search: start entering a number and the matching trucks show up as suggestions. Type just the number (e.g. `807`) and it's assembled into `truck-807`. You can also type `back` or `quit` here instead of a number to navigate.
 4. **Launch config** — a list of the 4 available configs. `sds_road_readiness` is listed first if you picked English; `etc_sds_road_readiness` is listed first if you picked 日本語.
 5. **Route** (optional) — every available route, sorted by map. A route name used by more than one map shows up as `route_name (map_name)` so the duplicates stay tellable apart.
@@ -99,6 +99,26 @@ The Polarion link is built from a URL template in `recorder.py` (`POLARION_URL_T
 
 If you just want to capture a recording without building a `start_stack` command first, pick **Record the screen only** on the wizard's first menu — or run `./recorder.sh` (or type `recorder` once the alias is set up). Both go straight to the same `r` to start / `s` to stop / keep-or-discard / naming flow described above, in your chosen language for the wizard route — the video just won't have a vehicle name in its filename. They share the same remembered `skip`/last-test-case-id state as the full wizard.
 
+## Fetch the latest Run ID from the truck
+
+With the laptop cabled to a test truck, any of the three interfaces can grab the newest run id straight off the truck's log disk:
+
+- the standalone script — `./truck.sh [vehicle]`, or just `truck` from anywhere once the alias is set up (added automatically on first run, same as `launch`/`recorder`). It prints the run id, the full log path and the truck's hostname, and exits 1 with a readable error when the truck is unreachable.
+- the TUI wizard — **Fetch the latest Run ID from the truck** on the start menu prints the same information, puts the run id on your clipboard, and returns you to the menu.
+- the web UI — the **Fetch Run ID from truck** button under the form (the vehicle in the form field is a cross-check; the fetched run id shows up with a copy button).
+
+The truck this works against is the one the SSH target points at (`applied@192.168.1.11` by default) — the truck identifies itself by hostname (`truck-805-primarypc`), so the fetch knows which vehicle it's connected to. The log layout is `/media/hotswap1/frontier/truck-<N>/<year>/<month>/<day>/<run_id>`, and the newest run of the truck's *today* is preferred — if there's none yet today, the newest overall is used with a visible warning.
+
+Under the hood it runs the same fixed, read-only `ls | sort | tail -1` script over your own system `ssh` (`BatchMode=yes`, so it never prompts) that the Master Checklist app's fetch button uses — your `~/.ssh` keys do the authenticating, nothing from the UI ever reaches a shell, and the whole round trip is capped at 10 seconds.
+
+| env var | default | purpose |
+| --- | --- | --- |
+| `TRUCK_SSH_TARGET` | `applied@192.168.1.11` | SSH destination for the cabled truck |
+| `TRUCK_LOG_ROOT` | `/media/hotswap1/frontier` | root of the on-truck log tree |
+| `TRUCK_SSH_BIN` | `ssh` | SSH binary to invoke (test hook for a fake `ssh`) |
+
+`python3 truck.py [vehicle] [--json]` is the underlying CLI — `--json` prints machine-readable output (errors included, with exit code 1). `truck.py` is pure stdlib, so it runs without the venv.
+
 ## Where the options come from
 
 - **Vehicles and launch configs** always come from `options.csv` (see [Editing the options](#editing-the-options) below).
@@ -132,4 +152,4 @@ No code changes needed — both the web UI and the TUI read this file fresh on e
 ./venv/bin/python -m pytest
 ```
 
-Covers the command builder, options loading (including the brain2 live scan, its CSV fallback, and the nickname overlay), state/history/presets, the recorder's capture-backend detection and filename/sidecar helpers, an end-to-end drive of the TUI wizard with mocked prompts, and the web UI via Flask's test client.
+Covers the command builder, options loading (including the brain2 live scan, its CSV fallback, and the nickname overlay), state/history/presets, the recorder's capture-backend detection and filename/sidecar helpers, the truck run-id fetch (script construction, output parsing, and the ssh round trip against a fake `ssh` binary), an end-to-end drive of the TUI wizard with mocked prompts, and the web UI via Flask's test client.

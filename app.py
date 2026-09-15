@@ -2,6 +2,7 @@ import re
 
 from flask import Flask, render_template_string, request
 
+import truck
 from stack_options import build_command, load_options
 from state import (
     CUSTOM_PRESET,
@@ -93,7 +94,24 @@ PAGE = """
     <textarea name="custom_command" rows="2" cols="60"></textarea>
   </label>
   <button type="submit" name="action" value="save_custom_preset">{{ t(lang, 'save_custom_preset') }}</button>
+  <label>{{ t(lang, 'truck_fetch_btn') }}</label>
+  <button type="submit" name="action" value="truck_run">{{ t(lang, 'truck_fetch_btn') }}</button>
 </form>
+{% if truck_result %}
+  <div class="command-block">
+    <h3>{{ t(lang, 'truck_run_heading') }}</h3>
+    <pre id="truck-run-id">{{ truck_result.run_id }}</pre>
+    <button type="button" class="copy-btn">{{ t(lang, 'copy_to_clipboard') }}</button>
+    <span class="copy-status"></span>
+    <div class="history-meta">{{ truck_result.hostname }} — {{ truck_result.path }}{% if truck_result.warning %} — ⚠️ {{ truck_result.warning }}{% endif %}</div>
+  </div>
+{% endif %}
+{% if truck_error %}
+  <div class="command-block">
+    <h3>{{ t(lang, 'truck_run_heading') }}</h3>
+    <p>{{ truck_error }}</p>
+  </div>
+{% endif %}
 {% if command %}
   <div class="command-block">
     <h3>{{ t(lang, 'command_heading') }}</h3>
@@ -209,9 +227,20 @@ def index():
         "enable_japan_driving": lang == "ja",
     }
     command = None
+    truck_result = None
+    truck_error = None
     if request.method == "POST":
         action = request.form.get("action")
-        if action == "remove_preset":
+        if action == "truck_run":
+            # The fetch identifies the truck by its hostname; the vehicle
+            # picked in the form is only a cross-check (mismatch -> warning).
+            vehicle = normalize_vehicle_name(request.form.get("vehicle_name", ""))
+            number = vehicle[len("truck-"):] if vehicle.startswith("truck-") and vehicle[len("truck-"):].isdigit() else ""
+            try:
+                truck_result = truck.fetch_run_id(number)
+            except truck.TruckError as err:
+                truck_error = t(lang, "truck_error_prefix") + " " + str(err)
+        elif action == "remove_preset":
             # The preset form carries no command fields, so it just deletes
             # (and re-renders) rather than building anything.
             delete_preset(state, request.form.get("preset_name", ""))
@@ -262,6 +291,8 @@ def index():
         routes=options["route"],
         form=form,
         command=command,
+        truck_result=truck_result,
+        truck_error=truck_error,
         lang=lang,
         t=t,
         presets=state.get("presets", {}),

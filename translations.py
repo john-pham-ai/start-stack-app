@@ -64,6 +64,13 @@ TRANSLATIONS = {
     "menu_prompt": {"en": "What do you want to do?", "ja": "何をしますか？"},
     "start_new": {"en": "Build a new command", "ja": "新しいコマンドを作成"},
     "record_only": {"en": "Record the screen only", "ja": "画面録画のみ"},
+    "truck_run_menu": {
+        "en": "Fetch the latest Run ID from the truck",
+        "ja": "トラックから最新の実行IDを取得",
+    },
+    "truck_fetch_btn": {"en": "Fetch Run ID from truck", "ja": "トラックから実行IDを取得"},
+    "truck_run_heading": {"en": "Latest run on the truck", "ja": "トラック上の最新ラン"},
+    "truck_error_prefix": {"en": "Could not fetch the run id:", "ja": "実行IDを取得できませんでした："},
     "preset_label": {"en": "Preset", "ja": "プリセット"},
     "recent_label": {"en": "Recent", "ja": "最近"},
     "recent_heading": {"en": "Recent commands", "ja": "最近のコマンド"},

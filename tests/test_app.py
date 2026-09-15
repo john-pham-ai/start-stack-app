@@ -302,3 +302,54 @@ class TestWebUI:
             },
         ).get_data(as_text=True)
         assert "--enable_japan_driving" in page
+
+
+class TestTruckFetch:
+    INFO = {
+        "vehicle": "805",
+        "run_id": "2026-09-15_14-48-57_truck-805",
+        "path": "/media/hotswap1/frontier/truck-805/2026/09/15/2026-09-15_14-48-57_truck-805",
+        "date": "2026/09/15",
+        "hostname": "truck-805-primarypc",
+        "warning": "",
+    }
+
+    def test_button_rendered(self, client):
+        page = client.get("/").get_data(as_text=True)
+        assert 'value="truck_run"' in page
+        assert "Fetch Run ID from truck" in page
+
+    def test_fetch_renders_result_block(self, client, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module.truck, "fetch_run_id", lambda vehicle: dict(self.INFO))
+        page = client.post(
+            "/",
+            data={"lang": "en", "vehicle_name": "805", "action": "truck_run"},
+        ).get_data(as_text=True)
+        assert "Latest run on the truck" in page
+        assert "2026-09-15_14-48-57_truck-805" in page
+        assert "/media/hotswap1/frontier/truck-805/" in page
+
+    def test_fetch_error_renders_message(self, client, monkeypatch):
+        import app as app_module
+
+        def boom(vehicle):
+            raise app_module.truck.TruckError("could not SSH to applied@192.168.1.11")
+
+        monkeypatch.setattr(app_module.truck, "fetch_run_id", boom)
+        page = client.post(
+            "/",
+            data={"lang": "en", "vehicle_name": "805", "action": "truck_run"},
+        ).get_data(as_text=True)
+        assert "Could not fetch the run id:" in page
+        assert "could not SSH" in page
+        assert "2026-09-15" not in page  # no stale result block
+
+    def test_fetch_does_not_record_history(self, client, monkeypatch, isolated_state):
+        import app as app_module
+
+        monkeypatch.setattr(app_module.truck, "fetch_run_id", lambda vehicle: dict(self.INFO))
+        client.post("/", data={"lang": "en", "vehicle_name": "805", "action": "truck_run"})
+        # A fetch builds no command, so nothing lands in the history.
+        assert not isolated_state.exists()

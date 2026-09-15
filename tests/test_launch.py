@@ -601,6 +601,7 @@ class TestAskStartMenu:
         assert captured["titles"] == [
             "Build a new command",
             "Record the screen only",
+            "Fetch the latest Run ID from the truck",
             "Save a custom command as a preset",
             "Quit",
         ]
@@ -621,6 +622,7 @@ class TestAskStartMenu:
         assert captured["titles"] == [
             "Build a new command",
             "Record the screen only",
+            "Fetch the latest Run ID from the truck",
             "Save a custom command as a preset",
             "Preset: night loop",
             "Recent: t · c",
@@ -767,3 +769,102 @@ class TestRemovePreset:
         launch.remove_preset({}, "en")
         assert calls == []
         assert capsys.readouterr().out == ""
+
+
+class TestTruckFetch:
+    """The truck entry on the start menu, and its flow."""
+
+    INFO = {
+        "vehicle": "805",
+        "run_id": "2026-09-15_14-48-57_truck-805",
+        "path": "/media/hotswap1/frontier/truck-805/2026/09/15/2026-09-15_14-48-57_truck-805",
+        "date": "2026/09/15",
+        "hostname": "truck-805-primarypc",
+        "warning": "",
+    }
+
+    @pytest.fixture(autouse=True)
+    def isolated_state(self, tmp_path, monkeypatch):
+        import state as state_module
+
+        path = tmp_path / "state.json"
+        monkeypatch.setattr(state_module, "STATE_PATH", str(path))
+        monkeypatch.setenv("BRAIN2_REPO_PATH", "/nonexistent-brain2")
+        return path
+
+    def test_menu_lists_truck_entry(self, monkeypatch):
+        captured = {}
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None):
+                captured["titles"] = [c.title for c in choices]
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        ask_start_menu({}, "en")
+        assert "Fetch the latest Run ID from the truck" in captured["titles"]
+
+    def test_menu_returns_truck_sentinel(self, monkeypatch):
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None):
+                self.choices = choices
+
+            def ask(self):
+                by_title = {c.title: c.value for c in self.choices}
+                return by_title["Fetch the latest Run ID from the truck"]
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        assert ask_start_menu({}, "en") is launch.TRUCK_RUN
+
+    def test_run_truck_fetch_prints_and_copies(self, monkeypatch, capsys):
+        copied = []
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: dict(self.INFO))
+        monkeypatch.setattr(launch.pyperclip, "copy", copied.append)
+        launch.run_truck_fetch("en")
+        out = capsys.readouterr().out
+        assert "run_id: 2026-09-15_14-48-57_truck-805" in out
+        assert "/media/hotswap1/frontier/truck-805/" in out
+        assert copied == ["2026-09-15_14-48-57_truck-805"]
+        assert "(copied to clipboard)" in out
+
+    def test_run_truck_fetch_prints_warning(self, monkeypatch, capsys):
+        info = dict(self.INFO, warning="No runs found for today on the truck's clock.")
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: info)
+        monkeypatch.setattr(
+            launch.pyperclip, "copy", lambda text: None
+        )
+        launch.run_truck_fetch("en")
+        assert "⚠️" in capsys.readouterr().out
+
+    def test_run_truck_fetch_error_is_printed_not_raised(self, monkeypatch, capsys):
+        def boom():
+            raise launch.truck.TruckError("could not SSH to applied@192.168.1.11")
+
+        monkeypatch.setattr(launch.truck, "fetch_run_id", boom)
+        launch.run_truck_fetch("en")  # must not raise
+        out = capsys.readouterr().out
+        assert "Could not fetch the run id:" in out
+        assert "could not SSH" in out
+
+    def test_truck_menu_entry_loops_back_to_menu(self, monkeypatch, capsys):
+        # Pick the truck entry, then quit — the fetch runs and the menu is
+        # shown again (not straight back into the wizard steps).
+        menu_returns = [launch.TRUCK_RUN, launch.QUIT]
+        monkeypatch.setattr(launch, "ask_start_menu", lambda state, lang: menu_returns.pop(0))
+        # The language step still prompts through questionary.
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: dict(self.INFO))
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+
+        launch.main()
+
+        assert menu_returns == []  # the menu was asked twice: fetch, then quit
+        out = capsys.readouterr().out
+        assert "run_id: 2026-09-15_14-48-57_truck-805" in out
+        assert "Cancelled." in out
