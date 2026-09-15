@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 
 STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")
@@ -9,6 +10,13 @@ MAX_HISTORY_ENTRIES = 20
 
 # The fields that fully describe one built command / one preset.
 COMMAND_FIELDS = ("vehicle_name", "launch_config", "route", "enable_japan_driving")
+
+# Preset shapes: a values preset is a set of form answers the wizard/web UI
+# rebuilds into a command; a custom preset is a raw command string saved as-is.
+VALUES_PRESET = "values"
+CUSTOM_PRESET = "command"
+
+VEHICLE_FLAG_RE = re.compile(r"--vehicle_name[ =](\S+)")
 
 
 def load_state(path=None):
@@ -38,14 +46,19 @@ def command_values(entry):
     return values
 
 
-def remember_command(state, values, command, now=None):
+def remember_command(state, values, command, now=None, custom=False):
     """Insert a built command at the front of history, newest first.
 
     Building the same command again just refreshes the existing top entry's
     timestamp instead of stacking duplicates. History is capped at
-    MAX_HISTORY_ENTRIES.
+    MAX_HISTORY_ENTRIES. A raw custom command can be recorded with custom=True
+    so the UIs offer it back verbatim instead of re-deriving it from fields.
     """
-    entry = {"built_at": (now or datetime.now()).isoformat(timespec="seconds"), "command": command}
+    entry = {
+        "built_at": (now or datetime.now()).isoformat(timespec="seconds"),
+        "command": command,
+        "custom": bool(custom),
+    }
     entry.update(command_values(values))
     history = state.setdefault("history", [])
     if history and history[0].get("command") == command:
@@ -67,6 +80,71 @@ def save_preset(state, name, values):
 
 def load_preset(state, name):
     return state.get("presets", {}).get(name)
+
+
+def delete_preset(state, name):
+    """Remove a saved preset by name. Returns True if it existed."""
+    presets = state.get("presets", {})
+    if name in presets:
+        del presets[name]
+        return True
+    return False
+
+
+def preset_kind(entry):
+    """Which shape a preset/history entry is: "values" or "command".
+
+    Entries saved before custom presets existed carry no "kind", so they
+    read as values presets — old state files keep working as-is.
+    """
+    if not isinstance(entry, dict):
+        return VALUES_PRESET
+    return CUSTOM_PRESET if entry.get("kind") == CUSTOM_PRESET else VALUES_PRESET
+
+
+def normalize_custom_command(text):
+    """Collapse a pasted command into a clean single line.
+
+    Handles the common paste artifacts: a leading shell prompt ($/#), the
+    multi-line backslash form the builder produces ("cmd \\n  --flag"), any
+    other stray backslashes, and whitespace runs.
+    """
+    text = (text or "").strip()
+    text = re.sub(r"^[#$]\s*", "", text)
+    text = re.sub(r"\\\s*(\r?\n|\Z)", " ", text)  # line continuations / trailing \
+    text = re.sub(r"\\\s+", " ", text)  # stray backslash before whitespace
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def vehicle_from_command(command):
+    """Pull the --vehicle_name value out of a raw command ("" if absent)."""
+    match = VEHICLE_FLAG_RE.search(command or "")
+    return match.group(1) if match else ""
+
+
+def command_entry_values(command):
+    """History-row values for a raw custom command.
+
+    Only the vehicle name is derivable; the rest stay blank, and the UIs
+    display the command itself as the summary.
+    """
+    return {
+        "vehicle_name": vehicle_from_command(command),
+        "launch_config": "",
+        "route": "",
+        "enable_japan_driving": False,
+    }
+
+
+def save_custom_preset(state, name, command):
+    """Save a raw command as a preset under a name for verbatim reuse."""
+    name = (name or "").strip()
+    command = (command or "").strip()
+    if not name or not command:
+        return None
+    state.setdefault("presets", {})[name] = {"kind": CUSTOM_PRESET, "command": command}
+    return name
 
 
 def get_history(state, limit=None):

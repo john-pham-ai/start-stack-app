@@ -3,7 +3,21 @@ import re
 from flask import Flask, render_template_string, request
 
 from stack_options import build_command, load_options
-from state import get_history, load_state, remember_command, save_preset, save_state
+from state import (
+    CUSTOM_PRESET,
+    command_entry_values,
+    command_values,
+    delete_preset,
+    get_history,
+    load_preset,
+    load_state,
+    normalize_custom_command,
+    preset_kind,
+    remember_command,
+    save_custom_preset,
+    save_preset,
+    save_state,
+)
 from translations import t
 
 app = Flask(__name__)
@@ -27,12 +41,17 @@ PAGE = """
 <a class="lang-switch" href="?lang={{ 'ja' if lang == 'en' else 'en' }}">{{ t(lang, 'switch_language') }}</a>
 <h1>{{ t(lang, 'title') }}</h1>
 {% if presets %}
-<label>{{ t(lang, 'preset_label') }}
-  <select id="preset-load">
-    <option value="">--</option>
-    {% for name in presets %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
-  </select>
-</label>
+<form method="post" class="preset-form">
+  <input type="hidden" name="lang" value="{{ lang }}">
+  <label>{{ t(lang, 'preset_label') }}
+    <select id="preset-load" name="preset_name">
+      <option value="">--</option>
+      {% for name, entry in presets.items() %}<option value="{{ name }}">{{ name }}{% if entry.get('kind') == 'command' %} {{ t(lang, 'custom_tag') }}{% endif %}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit" name="action" value="load_preset" id="load-preset-btn" disabled>{{ t(lang, 'load_preset') }}</button>
+  <button type="submit" name="action" value="remove_preset" id="remove-preset-btn" disabled>{{ t(lang, 'remove_preset') }}</button>
+</form>
 {% endif %}
 <form method="post">
   <input type="hidden" name="lang" value="{{ lang }}">
@@ -70,6 +89,10 @@ PAGE = """
     <input type="text" name="preset_name">
   </label>
   <button type="submit" name="action" value="save_preset">{{ t(lang, 'save_as_preset') }}</button>
+  <label>{{ t(lang, 'custom_command_label') }}
+    <textarea name="custom_command" rows="2" cols="60"></textarea>
+  </label>
+  <button type="submit" name="action" value="save_custom_preset">{{ t(lang, 'save_custom_preset') }}</button>
 </form>
 {% if command %}
   <div class="command-block">
@@ -84,7 +107,7 @@ PAGE = """
     <h3>{{ t(lang, 'recent_heading') }}</h3>
     {% for entry in history %}
     <div class="command-block history-item">
-      <div class="history-meta">{{ entry.built_at }} — {{ entry.vehicle_name }} · {{ entry.launch_config }}{% if entry.route %} · {{ entry.route }}{% endif %}</div>
+      <div class="history-meta">{{ entry.built_at }}{% if entry.vehicle_name %} — {{ entry.vehicle_name }} · {{ entry.launch_config }}{% if entry.route %} · {{ entry.route }}{% endif %}{% elif entry.command %} — {{ entry.command[:60] }}{% endif %}</div>
       <pre>{{ entry.command }}</pre>
       <button type="button" class="copy-btn">{{ t(lang, 'copy_to_clipboard') }}</button>
       <span class="copy-status"></span>
@@ -94,17 +117,17 @@ PAGE = """
 {% endif %}
 <script>
   (function () {
-    // Loading a preset fills the form in place — no page reload needed.
-    var presets = {{ presets | tojson }};
+    // The load/remove buttons enable once a preset is actually selected.
+    // Loading itself is server-side: it builds (or shows verbatim) the
+    // command, and the copy script below auto-copies it on page load.
     var presetSelect = document.getElementById("preset-load");
+    var loadBtn = document.getElementById("load-preset-btn");
+    var removeBtn = document.getElementById("remove-preset-btn");
     if (presetSelect) {
       presetSelect.addEventListener("change", function () {
-        var preset = presets[presetSelect.value];
-        if (!preset) return;
-        document.querySelector('[name="vehicle_name"]').value = preset.vehicle_name || "";
-        document.querySelector('[name="launch_config"]').value = preset.launch_config || "";
-        document.querySelector('[name="route"]').value = preset.route || "";
-        document.querySelector('[name="enable_japan_driving"]').checked = !!preset.enable_japan_driving;
+        var empty = !presetSelect.value;
+        if (loadBtn) loadBtn.disabled = empty;
+        if (removeBtn) removeBtn.disabled = empty;
       });
     }
   })();
@@ -187,20 +210,52 @@ def index():
     }
     command = None
     if request.method == "POST":
-        form["vehicle_name"] = normalize_vehicle_name(request.form.get("vehicle_name", ""))
-        form["launch_config"] = request.form.get("launch_config", "")
-        form["route"] = request.form.get("route", "")
-        form["enable_japan_driving"] = "enable_japan_driving" in request.form
-        command = build_command(
-            vehicle_name=form["vehicle_name"],
-            launch_config=form["launch_config"],
-            route=form["route"],
-            enable_japan_driving=form["enable_japan_driving"],
-        )
-        remember_command(state, form, command)
-        if request.form.get("action") == "save_preset":
-            save_preset(state, request.form.get("preset_name"), form)
-        save_state(state)
+        action = request.form.get("action")
+        if action == "remove_preset":
+            # The preset form carries no command fields, so it just deletes
+            # (and re-renders) rather than building anything.
+            delete_preset(state, request.form.get("preset_name", ""))
+            save_state(state)
+        elif action == "save_custom_preset":
+            # A raw command saved verbatim; the normalizer strips shell-prompt
+            # and line-continuation paste artifacts.
+            custom = normalize_custom_command(request.form.get("custom_command", ""))
+            save_custom_preset(state, request.form.get("preset_name"), custom)
+            save_state(state)
+        elif action == "load_preset":
+            # Using a preset means the command comes out right away — values
+            # presets get built, custom presets are shown verbatim — and the
+            # copy script auto-copies it on page load. No re-walking the form.
+            entry = load_preset(state, request.form.get("preset_name", "")) or {}
+            if preset_kind(entry) == CUSTOM_PRESET:
+                command = entry["command"]
+                remember_command(state, command_entry_values(command), command, custom=True)
+            elif entry:
+                values = command_values(entry)
+                form.update(values)
+                command = build_command(
+                    vehicle_name=values["vehicle_name"],
+                    launch_config=values["launch_config"],
+                    route=values["route"],
+                    enable_japan_driving=values["enable_japan_driving"],
+                )
+                remember_command(state, values, command)
+            save_state(state)
+        else:  # build / save_preset
+            form["vehicle_name"] = normalize_vehicle_name(request.form.get("vehicle_name", ""))
+            form["launch_config"] = request.form.get("launch_config", "")
+            form["route"] = request.form.get("route", "")
+            form["enable_japan_driving"] = "enable_japan_driving" in request.form
+            command = build_command(
+                vehicle_name=form["vehicle_name"],
+                launch_config=form["launch_config"],
+                route=form["route"],
+                enable_japan_driving=form["enable_japan_driving"],
+            )
+            remember_command(state, form, command)
+            if action == "save_preset":
+                save_preset(state, request.form.get("preset_name"), form)
+            save_state(state)
     return render_template_string(
         PAGE,
         options=options,

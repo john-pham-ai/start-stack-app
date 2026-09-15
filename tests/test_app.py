@@ -104,7 +104,187 @@ class TestWebUI:
         )
         page = client.get("/").get_data(as_text=True)
         assert 'value="night loop"' in page
-        assert "presets[" in page  # preset data embedded for the JS loader
+        # Loading is a server-side action with its own button now.
+        assert 'id="load-preset-btn" disabled' in page
+
+    def test_remove_preset_action(self, client, isolated_state):
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_preset",
+                "preset_name": "night loop",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+            },
+        )
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "remove_preset",
+                "preset_name": "night loop",
+            },
+        ).get_data(as_text=True)
+        state = json.loads(isolated_state.read_text())
+        assert "presets" not in state or "night loop" not in state.get("presets", {})
+        # The preset dropdown (and the whole remove form) disappears with it...
+        assert 'value="night loop"' not in page
+        # ...and no command block was built from the remove-only POST
+        # (history entries from earlier runs may still show, that's fine).
+        assert 'id="command"' not in page
+
+    def test_remove_preset_keeps_the_others(self, client, isolated_state):
+        for name in ("a", "b"):
+            client.post(
+                "/",
+                data={
+                    "lang": "en",
+                    "action": "save_preset",
+                    "preset_name": name,
+                    "vehicle_name": "807",
+                    "launch_config": "sds_road_readiness",
+                },
+            )
+        client.post(
+            "/", data={"lang": "en", "action": "remove_preset", "preset_name": "a"}
+        )
+        state = json.loads(isolated_state.read_text())
+        assert list(state["presets"]) == ["b"]
+
+    def test_remove_preset_blank_name_is_noop(self, client, isolated_state):
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_preset",
+                "preset_name": "night loop",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+            },
+        )
+        client.post("/", data={"lang": "en", "action": "remove_preset", "preset_name": ""})
+        state = json.loads(isolated_state.read_text())
+        assert "night loop" in state["presets"]
+
+    def test_remove_button_disabled_until_selection(self, client):
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_preset",
+                "preset_name": "night loop",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+            },
+        )
+        page = client.get("/").get_data(as_text=True)
+        assert 'id="remove-preset-btn" disabled' in page
+
+    def test_load_values_preset_builds_command_immediately(self, client, isolated_state):
+        """Loading a preset is one click: command built, rendered, auto-copied."""
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_preset",
+                "preset_name": "night loop",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+                "route": "shoreline_straight",
+            },
+        )
+        page = client.post(
+            "/", data={"lang": "en", "action": "load_preset", "preset_name": "night loop"}
+        ).get_data(as_text=True)
+        assert 'id="command"' in page  # rendered -> the auto-copy JS picks it up
+        assert "--vehicle_name truck-807" in page
+        assert "--route shoreline_straight" in page
+        # The form reflects the preset's values too.
+        assert 'value="shoreline_straight" selected' in page
+        # And the load was recorded in history.
+        state = json.loads(isolated_state.read_text())
+        assert state["history"][0]["custom"] is False
+        assert state["history"][0]["command"].startswith("start_stack")
+
+    def test_load_custom_preset_shows_command_verbatim(self, client, isolated_state):
+        isolated_state.write_text(
+            json.dumps(
+                {
+                    "presets": {
+                        "raw run": {
+                            "kind": "command",
+                            "command": "my_tool --flag --vehicle_name truck-42",
+                        }
+                    }
+                }
+            )
+        )
+        page = client.post(
+            "/", data={"lang": "en", "action": "load_preset", "preset_name": "raw run"}
+        ).get_data(as_text=True)
+        assert "my_tool --flag --vehicle_name truck-42" in page
+        assert 'id="command"' in page
+        state = json.loads(isolated_state.read_text())
+        entry = state["history"][0]
+        assert entry["custom"] is True
+        assert entry["vehicle_name"] == "truck-42"
+
+    def test_load_preset_blank_name_is_noop(self, client):
+        page = client.post(
+            "/", data={"lang": "en", "action": "load_preset", "preset_name": ""}
+        ).get_data(as_text=True)
+        assert 'id="command"' not in page
+
+    def test_save_custom_preset_action(self, client, isolated_state):
+        # Pasting the multi-line backslash form normalizes to one line.
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_custom_preset",
+                "preset_name": "raw run",
+                "custom_command": "start_stack \\\n  --vehicle_name truck-807 \\\n  --launch_config cfg",
+            },
+        ).get_data(as_text=True)
+        state = json.loads(isolated_state.read_text())
+        assert state["presets"]["raw run"] == {
+            "kind": "command",
+            "command": "start_stack --vehicle_name truck-807 --launch_config cfg",
+        }
+        # The dropdown marks it as custom, and the command textarea is back empty.
+        assert "raw run (custom)" in page
+        assert ">start_stack" not in page.split("<textarea")[1].split("</textarea>")[0]
+
+    def test_save_custom_preset_blank_command_ignored(self, client, isolated_state):
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_custom_preset",
+                "preset_name": "raw run",
+                "custom_command": "   ",
+            },
+        )
+        state = json.loads(isolated_state.read_text())
+        assert "presets" not in state
+
+    def test_custom_command_html_escaping(self, client, isolated_state):
+        nasty = 'echo "<b>&x</b>" --vehicle_name=truck-1'
+        client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "save_custom_preset",
+                "preset_name": "weird",
+                "custom_command": nasty,
+            },
+        )
+        page = client.post(
+            "/", data={"lang": "en", "action": "load_preset", "preset_name": "weird"}
+        ).get_data(as_text=True)
+        assert "&lt;b&gt;&amp;x&lt;/b&gt;" in page  # escaped, not injected
+        assert "<b>&x</b>" not in page
 
     def test_japanese_ui(self, client):
         page = client.get("/?lang=ja").get_data(as_text=True)

@@ -5,13 +5,19 @@ import pytest
 import state as state_module
 from state import (
     MAX_HISTORY_ENTRIES,
+    command_entry_values,
     command_values,
+    delete_preset,
     get_history,
     load_preset,
     load_state,
+    normalize_custom_command,
+    preset_kind,
     remember_command,
+    save_custom_preset,
     save_preset,
     save_state,
+    vehicle_from_command,
 )
 
 
@@ -106,6 +112,110 @@ class TestPresets:
         save_preset(state, "p", values(route="a"))
         save_preset(state, "p", values(route="b"))
         assert load_preset(state, "p")["route"] == "b"
+
+    def test_delete_existing(self):
+        state = {}
+        save_preset(state, "p", values(route="a"))
+        assert delete_preset(state, "p") is True
+        assert state["presets"] == {}
+
+    def test_delete_last_one_removes_presets_dict(self):
+        state = {"presets": {"p": values()}}
+        delete_preset(state, "p")
+        assert state["presets"] == {}
+
+    def test_delete_missing_is_false(self):
+        state = {"presets": {"p": values()}}
+        assert delete_preset(state, "nope") is False
+        assert "p" in state["presets"]
+
+    def test_delete_blank_is_noop(self):
+        # The web UI posts a blank name when nothing is selected.
+        assert delete_preset({"presets": {"p": values()}}, "") is False
+        assert delete_preset({}, "") is False
+
+
+class TestCustomPresets:
+    def test_save_custom_preset(self):
+        state = {}
+        assert save_custom_preset(state, "raw run", "start_stack --vehicle_name truck-807") == "raw run"
+        assert state["presets"]["raw run"] == {
+            "kind": "command",
+            "command": "start_stack --vehicle_name truck-807",
+        }
+
+    def test_save_custom_preset_blank_rejected(self):
+        state = {}
+        assert save_custom_preset(state, "name", "") is None
+        assert save_custom_preset(state, "", "some command") is None
+        assert save_custom_preset(state, "   ", "some command") is None
+        assert state == {}
+
+    def test_preset_kind_defaults_to_values(self):
+        # Presets saved before custom presets existed carry no "kind".
+        assert preset_kind({"vehicle_name": "truck-807"}) == "values"
+        assert preset_kind({}) == "values"
+        assert preset_kind("not a dict") == "values"
+        assert preset_kind({"kind": "command", "command": "x"}) == "command"
+
+
+class TestNormalizeCustomCommand:
+    def test_strips_leading_shell_prompt(self):
+        assert normalize_custom_command("$ start_stack --flag") == "start_stack --flag"
+        assert normalize_custom_command("# start_stack --flag") == "start_stack --flag"
+
+    def test_collapses_line_continuations(self):
+        pasted = "start_stack \\\n  --vehicle_name truck-807 \\\n  --launch_config cfg"
+        assert normalize_custom_command(pasted) == (
+            "start_stack --vehicle_name truck-807 --launch_config cfg"
+        )
+
+    def test_removes_stray_backslashes(self):
+        assert normalize_custom_command("cmd \\ flag") == "cmd flag"
+        assert normalize_custom_command("cmd \\") == "cmd"
+
+    def test_collapses_whitespace_runs(self):
+        assert normalize_custom_command("  cmd    --flag\t--x  ") == "cmd --flag --x"
+
+    def test_blank_stays_blank(self):
+        assert normalize_custom_command("") == ""
+        assert normalize_custom_command("   ") == ""
+        assert normalize_custom_command(None) == ""
+
+
+class TestVehicleFromCommand:
+    def test_space_form(self):
+        assert vehicle_from_command("start_stack --vehicle_name truck-807 --flag") == "truck-807"
+
+    def test_equals_form(self):
+        assert vehicle_from_command("start_stack --vehicle_name=truck-42") == "truck-42"
+
+    def test_missing_is_blank(self):
+        assert vehicle_from_command("start_stack --flag") == ""
+        assert vehicle_from_command("") == ""
+
+
+class TestCommandEntryValues:
+    def test_only_vehicle_is_derived(self):
+        values = command_entry_values("start_stack --vehicle_name truck-807 --flag")
+        assert values == {
+            "vehicle_name": "truck-807",
+            "launch_config": "",
+            "route": "",
+            "enable_japan_driving": False,
+        }
+
+
+class TestRememberCommandCustom:
+    def test_custom_flag_recorded(self):
+        state = {}
+        entry = remember_command(state, command_entry_values("start_stack --vehicle_name t-1"), "cmd", custom=True)
+        assert entry["custom"] is True
+
+    def test_regular_build_not_marked_custom(self):
+        state = {}
+        entry = remember_command(state, values(), "cmd")
+        assert entry["custom"] is False
 
 
 class TestCommandValues:

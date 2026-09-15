@@ -4,13 +4,36 @@ from questionary import Choice
 
 import recorder
 from stack_options import build_command, load_options, map_key_for_route
-from state import command_values, get_history, load_state, remember_command, save_preset, save_state
+from state import (
+    CUSTOM_PRESET,
+    command_entry_values,
+    command_values,
+    delete_preset,
+    get_history,
+    load_state,
+    normalize_custom_command,
+    preset_kind,
+    remember_command,
+    save_custom_preset,
+    save_preset,
+    save_state,
+)
 from translations import t
 
 BACK = object()
 QUIT = object()
 NEW = object()  # "build a new command" on the start menu
 RECORD_ONLY = object()  # "record the screen only" on the start menu
+SAVE_CUSTOM = object()  # "save a custom command as a preset" on the start menu
+REMOVE_PRESET = object()  # "remove a preset" on the start menu
+
+
+class LoadedCommand:
+    """A custom preset's raw command, handed back from the start menu."""
+
+    def __init__(self, name, command):
+        self.name = name
+        self.command = command
 
 STEPS = ["language", "vehicle_name", "launch_config", "route", "enable_japan_driving"]
 
@@ -63,20 +86,29 @@ def ask_vehicle_name(lang, state, options, current_value=None):
 
 
 def summarize_entry(entry):
-    """One-line summary for a history entry in the shortcuts prompt."""
+    """One-line summary for a history entry in the shortcuts prompt.
+
+    Custom command entries have no wizard fields to summarize, so the
+    command itself (truncated) stands in.
+    """
     parts = [entry.get("vehicle_name", ""), entry.get("launch_config", "")]
     if entry.get("route"):
         parts.append(entry["route"])
-    return " · ".join(part for part in parts if part)
+    summary = " · ".join(part for part in parts if part)
+    if not summary and entry.get("command"):
+        command = entry["command"]
+        summary = command if len(command) <= 60 else command[:57] + "…"
+    return summary or "(no command)"
 
 
 def ask_start_menu(state, lang):
     """The first menu after the language pick.
 
-    Always shown. Recording-only mode is always one pick away, and presets
-    and recent commands join the list once they exist. Returns NEW (build a
-    command), RECORD_ONLY, QUIT, or a values dict loaded from a preset or
-    history entry.
+    Always shown. Recording-only mode and saving a custom command preset
+    are always one pick away; presets and recent commands join the list
+    once they exist. Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM /
+    REMOVE_PRESET / QUIT), a values dict loaded from a values preset or
+    history entry, or a LoadedCommand for a custom command preset.
     """
     presets = state.get("presets", {})
     history = get_history(state, limit=10)
@@ -84,22 +116,92 @@ def ask_start_menu(state, lang):
     choices = [
         Choice(title=t(lang, "start_new"), value=NEW),
         Choice(title=t(lang, "record_only"), value=RECORD_ONLY),
+        Choice(title=t(lang, "save_custom_preset"), value=SAVE_CUSTOM),
     ]
-    for name in presets:
-        choices.append(Choice(title=f"{t(lang, 'preset_label')}: {name}", value=("preset", name)))
+    for name, entry in presets.items():
+        title = f"{t(lang, 'preset_label')}: {name}"
+        if preset_kind(entry) == CUSTOM_PRESET:
+            title += f" {t(lang, 'custom_tag')}"
+        choices.append(Choice(title=title, value=("preset", name)))
     for idx, entry in enumerate(history):
         summary = summarize_entry(entry)
         choices.append(Choice(title=f"{t(lang, 'recent_label')}: {summary}", value=("history", idx)))
+    if presets:
+        choices.append(Choice(title=t(lang, "remove_preset"), value=REMOVE_PRESET))
     choices.append(Choice(title=t(lang, "quit"), value=QUIT))
 
     answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
     if answer is None or answer is QUIT:
         return QUIT
-    if answer is NEW or answer is RECORD_ONLY:
+    if answer in (NEW, RECORD_ONLY, SAVE_CUSTOM, REMOVE_PRESET):
         return answer
 
     kind, key = answer
-    return command_values(presets[key] if kind == "preset" else history[key])
+    entry = presets[key] if kind == "preset" else history[key]
+    if preset_kind(entry) == CUSTOM_PRESET or entry.get("custom"):
+        return LoadedCommand(key, entry["command"])
+    return command_values(entry)
+
+
+def save_custom_command_preset(state, lang):
+    """Ask for a raw command and save it as a custom preset."""
+    raw = questionary.text(t(lang, "custom_command_prompt")).ask()
+    command = normalize_custom_command(raw or "")
+    if not command:
+        return
+    name = (questionary.text(t(lang, "preset_name_prompt")).ask() or "").strip()
+    if save_custom_preset(state, name, command):
+        print(t(lang, "preset_saved") + " " + name + "\n")
+        save_state(state)
+
+
+def run_custom_command(state, lang, loaded):
+    """Print a custom preset's command, put it on the clipboard, done.
+
+    The command is used verbatim — nothing is re-derived from wizard
+    fields. Reusing a preset is a pure re-grab: no prompts, no recording
+    offer (use "Record the screen only" for that).
+    """
+    command = loaded.command
+    print("\n" + command + "\n")
+
+    remember_command(state, command_entry_values(command), command, custom=True)
+    save_state(state)
+
+    try:
+        pyperclip.copy(command)
+        print(t(lang, "copied_clipboard") + "\n")
+    except pyperclip.PyperclipException:
+        print(t(lang, "could_not_copy") + "\n")
+
+
+def remove_preset(state, lang):
+    """Pick one of the saved presets and delete it.
+
+    Back (or declining the confirm) leaves everything untouched; removing
+    saves the state right away so a quit afterwards can't resurrect it.
+    """
+    names = list(state.get("presets", {}))
+    if not names:
+        return
+
+    choices = [Choice(title=t(lang, "back"), value=BACK)]
+    for name, entry in state["presets"].items():
+        title = name
+        if preset_kind(entry) == CUSTOM_PRESET:
+            title += f" {t(lang, 'custom_tag')}"
+        choices.append(Choice(title=title, value=name))
+    answer = questionary.select(t(lang, "remove_preset_prompt"), choices=choices).ask()
+    if answer is None or answer is BACK:
+        return
+
+    message = t(lang, "confirm_remove_prompt").format(name=answer)
+    if not questionary.confirm(message, default=False).ask():
+        return
+
+    delete_preset(state, answer)
+    save_state(state)
+    print(t(lang, "preset_removed").format(name=answer) + "\n")
 
 
 def validated(values, options):
@@ -182,17 +284,32 @@ def main():
         values[STEPS[i]] = answer
         i += 1
 
-        # Right after the language is picked, the start menu.
+        # Right after the language is picked, the start menu. Removing or
+        # saving a preset loops back to the menu so you can carry on.
         if STEPS[i - 1] == "language":
-            menu = ask_start_menu(state, values["language"])
-            if menu is QUIT:
-                print(t(values["language"], "cancelled"))
-                return
-            if menu is RECORD_ONLY:
-                recorder.run_recording_flow(values["language"], state)
-                return
-            if menu is not NEW:
-                shortcut_values = menu
+            while True:
+                menu = ask_start_menu(state, values["language"])
+                if menu is QUIT:
+                    print(t(values["language"], "cancelled"))
+                    return
+                if menu is RECORD_ONLY:
+                    recorder.run_recording_flow(values["language"], state)
+                    return
+                if menu is REMOVE_PRESET:
+                    remove_preset(state, values["language"])
+                    continue
+                if menu is SAVE_CUSTOM:
+                    save_custom_command_preset(state, values["language"])
+                    continue
+                if isinstance(menu, LoadedCommand):
+                    run_custom_command(state, values["language"], menu)
+                    return
+                if menu is not NEW:
+                    # A values preset / recent command: the wizard is done —
+                    # exhaust the outer loop so no step gets asked, and the
+                    # command is built straight from the shortcut.
+                    shortcut_values = menu
+                    i = len(STEPS)
                 break
 
     lang = values["language"]
@@ -232,21 +349,25 @@ def main():
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
 
-    # The recording half is shared with the standalone `recorder` flow.
-    recorder.run_recording_flow(
-        lang,
-        state,
-        vehicle_name=values["vehicle_name"],
-        metadata={
-            "command": command,
-            "launch_config": values["launch_config"],
-            # The map isn't a command flag anymore — routes carry
-            # it — but it's still worth recording per run.
-            "map_key": map_key_for_route(options, values["route"]),
-            "route": values["route"],
-            "enable_japan_driving": values["enable_japan_driving"],
-        },
-    )
+    # Presets and recent commands are for re-grabbing a command fast:
+    # it's printed and on the clipboard, done — no recording offer. That
+    # offer (and the save-preset prompt above) belongs to hand-built
+    # commands; the menu's "Record the screen only" covers the rest.
+    if shortcut_values is None:
+        recorder.run_recording_flow(
+            lang,
+            state,
+            vehicle_name=values["vehicle_name"],
+            metadata={
+                "command": command,
+                "launch_config": values["launch_config"],
+                # The map isn't a command flag anymore — routes carry
+                # it — but it's still worth recording per run.
+                "map_key": map_key_for_route(options, values["route"]),
+                "route": values["route"],
+                "enable_japan_driving": values["enable_japan_driving"],
+            },
+        )
 
 
 if __name__ == "__main__":

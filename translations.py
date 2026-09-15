@@ -78,6 +78,27 @@ TRANSLATIONS = {
     "preset_saved": {"en": "Preset saved:", "ja": "プリセットを保存しました："},
     "preset_name_label": {"en": "Preset name", "ja": "プリセット名"},
     "save_as_preset": {"en": "Save as preset", "ja": "プリセットとして保存"},
+    "remove_preset": {"en": "Remove a preset", "ja": "プリセットを削除"},
+    "remove_preset_prompt": {
+        "en": "Which preset should be removed?",
+        "ja": "どのプリセットを削除しますか？",
+    },
+    "confirm_remove_prompt": {
+        "en": "Remove preset '{name}'?",
+        "ja": "プリセット「{name}」を削除しますか？",
+    },
+    "preset_removed": {"en": "Preset removed: {name}", "ja": "プリセットを削除しました：{name}"},
+    "save_custom_preset": {
+        "en": "Save a custom command as a preset",
+        "ja": "カスタムコマンドをプリセットとして保存",
+    },
+    "custom_command_prompt": {
+        "en": "Paste or type the command (one line)",
+        "ja": "コマンドを入力または貼り付けしてください（1行）",
+    },
+    "custom_command_label": {"en": "Custom command", "ja": "カスタムコマンド"},
+    "custom_tag": {"en": "(custom)", "ja": "（カスタム）"},
+    "load_preset": {"en": "Load", "ja": "読み込む"},
     "invalid_option_note": {
         "en": "(dropped saved values that no longer exist: {})",
         "ja": "（存在しなくなった保存値を除外しました：{}）",
