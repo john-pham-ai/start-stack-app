@@ -1,21 +1,20 @@
-import os
-
 import pyperclip
 import questionary
 from questionary import Choice
 
 import recorder
-from stack_options import build_command, load_options, map_keys_for_language, routes_for_map_key
-from state import load_state, save_state
+from stack_options import build_command, load_options, map_key_for_route
+from state import command_values, get_history, load_state, remember_command, save_preset, save_state
 from translations import t
 
 BACK = object()
 QUIT = object()
+NEW = object()  # "build a new command" on the start menu
+RECORD_ONLY = object()  # "record the screen only" on the start menu
 
-STEPS = ["language", "vehicle_name", "launch_config", "map_key", "route", "enable_japan_driving"]
+STEPS = ["language", "vehicle_name", "launch_config", "route", "enable_japan_driving"]
 
 PINNED_LAUNCH_CONFIG = {"en": ["sds_road_readiness"], "ja": ["etc_sds_road_readiness"]}
-PINNED_MAP_KEY = {"en": ["sunnyvale_office", "usa_zone_10"], "ja": ["jp_zone_53", "jp_zone_54"]}
 
 
 def choices_for(options, field, optional=False, opts_list=None, none_label="-- none --"):
@@ -38,11 +37,18 @@ def safe_default(remembered, choices):
     return remembered if remembered in [c.value for c in choices] else None
 
 
-def ask_vehicle_name(lang, state, current_value=None):
+def ask_vehicle_name(lang, state, options, current_value=None):
     message = t(lang, "vehicle_name_number_prompt") + " " + t(lang, "nav_hint")
-    default_number = current_value[len("truck-") :] if current_value else state.get("vehicle_number", "")
-    answer = questionary.text(
+    if current_value and current_value.startswith("truck-"):
+        default_number = current_value[len("truck-") :]
+    else:
+        default_number = state.get("vehicle_number", "")
+    numbers = [
+        opt.value[len("truck-") :] for opt in options["vehicle_name"] if opt.value.startswith("truck-")
+    ]
+    answer = questionary.autocomplete(
         message,
+        choices=numbers,
         default=default_number,
         validate=lambda text: True if text.strip() else "Enter a number (or 'back'/'quit').",
     ).ask()
@@ -56,29 +62,70 @@ def ask_vehicle_name(lang, state, current_value=None):
     return f"truck-{answer}"
 
 
-def ask_run_id_and_test_case(lang, state):
-    """Ask for the run id, then the Polarion test case id.
+def summarize_entry(entry):
+    """One-line summary for a history entry in the shortcuts prompt."""
+    parts = [entry.get("vehicle_name", ""), entry.get("launch_config", "")]
+    if entry.get("route"):
+        parts.append(entry["route"])
+    return " · ".join(part for part in parts if part)
 
-    Typing 'back' at the test case prompt returns to the run id prompt;
-    typing 'skip' (or leaving it blank) means no test case id. The skip
-    choice is remembered in state so it's the default next time.
+
+def ask_start_menu(state, lang):
+    """The first menu after the language pick.
+
+    Always shown. Recording-only mode is always one pick away, and presets
+    and recent commands join the list once they exist. Returns NEW (build a
+    command), RECORD_ONLY, QUIT, or a values dict loaded from a preset or
+    history entry.
     """
-    recording_state = state.setdefault("recording", {})
-    run_id = ""
-    while True:
-        answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
-        run_id = (answer or "").strip()
+    presets = state.get("presets", {})
+    history = get_history(state, limit=10)
 
-        skip_default = recording_state.get("skip_polarion", False)
-        default_tc = "skip" if skip_default else recording_state.get("last_test_case_id", "")
-        tc_answer = questionary.text(t(lang, "test_case_prompt"), default=default_tc).ask()
-        tc_answer = (tc_answer or "").strip()
+    choices = [
+        Choice(title=t(lang, "start_new"), value=NEW),
+        Choice(title=t(lang, "record_only"), value=RECORD_ONLY),
+    ]
+    for name in presets:
+        choices.append(Choice(title=f"{t(lang, 'preset_label')}: {name}", value=("preset", name)))
+    for idx, entry in enumerate(history):
+        summary = summarize_entry(entry)
+        choices.append(Choice(title=f"{t(lang, 'recent_label')}: {summary}", value=("history", idx)))
+    choices.append(Choice(title=t(lang, "quit"), value=QUIT))
 
-        if tc_answer.lower() == "back":
-            continue
-        if tc_answer.lower() == "skip" or tc_answer == "":
-            return run_id, "", True
-        return run_id, tc_answer, False
+    answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
+    if answer is None or answer is QUIT:
+        return QUIT
+    if answer is NEW or answer is RECORD_ONLY:
+        return answer
+
+    kind, key = answer
+    return command_values(presets[key] if kind == "preset" else history[key])
+
+
+def validated(values, options):
+    """Drop saved values that no longer exist in the current options.
+
+    vehicle_name is left alone (new trucks appear without an options edit),
+    but launch configs / routes that have disappeared since the preset or
+    history entry was saved are removed (launch_config falls back to the
+    first available config) so the rebuilt command stays valid.
+
+    Returns (values, dropped_labels).
+    """
+    dropped = []
+    out = dict(values)
+
+    if out.get("launch_config") and out["launch_config"] not in [o.value for o in options["launch_config"]]:
+        dropped.append(out["launch_config"])
+        out["launch_config"] = options["launch_config"][0].value
+
+    routes = [o.value for o in options["route"]]
+    if out.get("route") and out["route"] not in routes:
+        dropped.append(out["route"])
+        out["route"] = ""
+
+    out["enable_japan_driving"] = bool(out.get("enable_japan_driving"))
+    return out, dropped
 
 
 def ask_step(step, values, options, state):
@@ -91,28 +138,17 @@ def ask_step(step, values, options, state):
         choices = [Choice("English", "en"), Choice("日本語", "ja")]
         quit_label = "Quit / 終了"
     elif step == "vehicle_name":
-        return ask_vehicle_name(lang, state, prior_answer)
+        return ask_vehicle_name(lang, state, options, prior_answer)
     elif step == "launch_config":
         message = t(lang, "launch_config")
         ordered = pin_first(options["launch_config"], PINNED_LAUNCH_CONFIG[lang])
         choices = choices_for(options, "launch_config", opts_list=ordered)
         quit_label = t(lang, "quit")
         default = safe_default(prior_answer or state.get("launch_config", {}).get(lang), choices)
-    elif step == "map_key":
-        message = t(lang, "map_key")
-        available_map_keys = map_keys_for_language(options, lang)
-        ordered = pin_first(available_map_keys, PINNED_MAP_KEY[lang])
-        choices = choices_for(
-            options, "map_key", optional=True, opts_list=ordered, none_label=t(lang, "none_option")
-        )
-        quit_label = t(lang, "quit")
-        remembered = prior_answer if prior_answer is not None else state.get("map_key", {}).get(lang)
-        default = safe_default(remembered, choices)
     elif step == "route":
         message = t(lang, "route")
-        filtered_routes = routes_for_map_key(options, values.get("map_key", ""))
         choices = choices_for(
-            options, "route", optional=True, opts_list=filtered_routes, none_label=t(lang, "none_option")
+            options, "route", optional=True, none_label=t(lang, "none_option")
         )
         quit_label = t(lang, "quit")
     else:  # enable_japan_driving
@@ -133,6 +169,7 @@ def main():
     options = load_options()
     state = load_state()
     values = {}
+    shortcut_values = None
     i = 0
     while i < len(STEPS):
         answer = ask_step(STEPS[i], values, options, state)
@@ -145,80 +182,71 @@ def main():
         values[STEPS[i]] = answer
         i += 1
 
+        # Right after the language is picked, the start menu.
+        if STEPS[i - 1] == "language":
+            menu = ask_start_menu(state, values["language"])
+            if menu is QUIT:
+                print(t(values["language"], "cancelled"))
+                return
+            if menu is RECORD_ONLY:
+                recorder.run_recording_flow(values["language"], state)
+                return
+            if menu is not NEW:
+                shortcut_values = menu
+                break
+
     lang = values["language"]
+    if shortcut_values is not None:
+        values, dropped = validated(shortcut_values, options)
+        if dropped:
+            print(t(lang, "invalid_option_note").format(", ".join(dropped)) + "\n")
+        values["language"] = lang
 
     state["vehicle_number"] = values["vehicle_name"][len("truck-") :]
     state.setdefault("launch_config", {})[lang] = values["launch_config"]
-    state.setdefault("map_key", {})[lang] = values["map_key"]
-    save_state(state)
 
     command = build_command(
         vehicle_name=values["vehicle_name"],
         launch_config=values["launch_config"],
-        map_key=values["map_key"],
         route=values["route"],
         enable_japan_driving=values["enable_japan_driving"],
     )
 
     print("\n" + command + "\n")
+
+    remember_command(state, values, command)
+
+    # Only offer to save a preset for hand-built commands — a preset loaded
+    # from the shortcuts prompt is by definition already saved.
+    if shortcut_values is None:
+        if questionary.confirm(t(lang, "save_preset_prompt"), default=False).ask():
+            name = (questionary.text(t(lang, "preset_name_prompt")).ask() or "").strip()
+            if save_preset(state, name, values):
+                print(t(lang, "preset_saved") + " " + name + "\n")
+
+    save_state(state)
+
     try:
         pyperclip.copy(command)
         print(t(lang, "copied_clipboard") + "\n")
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
 
-    if not recorder.ensure_ffmpeg():
-        print(t(lang, "ffmpeg_missing") + "\n")
-    else:
-        should_finalize = False
-        with recorder.keypress_mode():
-            if recorder.wait_for_start(t(lang, "record_prompt")):
-                try:
-                    recording = recorder.ScreenRecording()
-                    recording.start()
-                except recorder.RecordingError as exc:
-                    print(t(lang, "record_failed") + " " + str(exc) + "\n")
-                else:
-                    print(t(lang, "record_started") + "\n")
-                    try:
-                        recorder.wait_for_stop(
-                            recording, label=t(lang, "recording_label"), hint=t(lang, "press_s_to_stop")
-                        )
-                    finally:
-                        recording.stop()
-
-                    if recorder.wait_for_keep_or_discard(t(lang, "keep_or_discard_prompt")):
-                        should_finalize = True
-                    else:
-                        recording.discard()
-                        print(t(lang, "recording_discarded") + "\n")
-
-        if should_finalize:
-            run_id, test_case_id, skipped_polarion = ask_run_id_and_test_case(lang, state)
-            video_path, sidecar_path = recording.finalize(
-                vehicle_name=values["vehicle_name"],
-                run_id=run_id,
-                test_case_id=test_case_id,
-                metadata={
-                    "command": command,
-                    "launch_config": values["launch_config"],
-                    "map_key": values["map_key"],
-                    "route": values["route"],
-                    "enable_japan_driving": values["enable_japan_driving"],
-                },
-            )
-
-            state["recording"]["skip_polarion"] = skipped_polarion
-            if not skipped_polarion and test_case_id:
-                state["recording"]["last_test_case_id"] = test_case_id
-            save_state(state)
-
-            print(t(lang, "recording_saved") + " " + video_path)
-            print(sidecar_path)
-            print(recorder.hyperlink(os.path.dirname(video_path), label=t(lang, "open_folder")) + "\n")
-            url = recorder.polarion_url(test_case_id)
-            if url:
-                print(t(lang, "polarion_link") + " " + url + "\n")
+    # The recording half is shared with the standalone `recorder` flow.
+    recorder.run_recording_flow(
+        lang,
+        state,
+        vehicle_name=values["vehicle_name"],
+        metadata={
+            "command": command,
+            "launch_config": values["launch_config"],
+            # The map isn't a command flag anymore — routes carry
+            # it — but it's still worth recording per run.
+            "map_key": map_key_for_route(options, values["route"]),
+            "route": values["route"],
+            "enable_japan_driving": values["enable_japan_driving"],
+        },
+    )
 
 
 if __name__ == "__main__":
