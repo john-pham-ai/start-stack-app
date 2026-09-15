@@ -41,6 +41,26 @@ class FakeText:
         return Prompt()
 
 
+class FakeConfirm:
+    """Stand-in for questionary.confirm: feeds queued answers, captures defaults."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.defaults = []
+        self.messages = []
+
+    def __call__(self, message, default=False):
+        self.defaults.append(default)
+        self.messages.append(message)
+        prompt = self
+
+        class Prompt:
+            def ask(_):
+                return prompt.answers.pop(0) if prompt.answers else False
+
+        return Prompt()
+
+
 class TestSanitize:
     def test_strips_unsafe_characters(self):
         assert sanitize("run/ 123:tc") == "run-123-tc"
@@ -111,6 +131,21 @@ class TestTodayFolder:
 
 
 class TestAskRunIdAndTestCase:
+    TRUCK_INFO = {
+        "vehicle": "805",
+        "run_id": "2026-09-15_14-48-57_truck-805",
+        "path": "/media/hotswap1/frontier/truck-805/2026/09/15/2026-09-15_14-48-57_truck-805",
+        "date": "2026/09/15",
+        "hostname": "truck-805-primarypc",
+        "warning": "",
+    }
+
+    @pytest.fixture(autouse=True)
+    def default_no_pull(self, monkeypatch):
+        """Every test in this class starts with the toggle answering No
+        (the first-time default); truck tests swap in their own FakeConfirm."""
+        monkeypatch.setattr(recorder.questionary, "confirm", FakeConfirm([False]))
+
     def test_normal_flow(self, monkeypatch):
         fake = FakeText(["run-42", "TC-99"])
         monkeypatch.setattr(recorder.questionary, "text", fake)
@@ -155,40 +190,39 @@ class TestAskRunIdAndTestCase:
 
     def test_prompts_go_through_translations(self, monkeypatch):
         fake = FakeText(["run-42", "TC-1"])
+        confirm = FakeConfirm([False])
         monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", confirm)
         ask_run_id_and_test_case("ja", {})
-        assert fake.messages[0] == (
-            "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ、"
-            "'truck' と入力するとトラックから最新を取得）"
-        )
+        assert confirm.messages[0] == "トラックから最新の run id を取得しますか？"
+        assert fake.messages[0] == "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ）"
         assert "Polarion のテストケース ID" in fake.messages[1]
 
-    TRUCK_INFO = {
-        "vehicle": "805",
-        "run_id": "2026-09-15_14-48-57_truck-805",
-        "path": "/media/hotswap1/frontier/truck-805/2026/09/15/2026-09-15_14-48-57_truck-805",
-        "date": "2026/09/15",
-        "hostname": "truck-805-primarypc",
-        "warning": "",
-    }
-
-    def test_truck_fetches_latest_run_id(self, monkeypatch, capsys):
-        # Flow: type 'truck' at the run-id prompt, the fetch prints what it
-        # found, the prompt comes back with the fetched id as the default,
-        # and pressing Enter (the queued id) accepts it.
-        fake = FakeText(["truck", self.TRUCK_INFO["run_id"], "TC-9"])
+    def test_toggle_yes_fetches_and_skips_the_paste(self, monkeypatch, capsys):
+        # Yes at the toggle: the fetch runs, prints what it found, and the
+        # paste prompt is skipped entirely — straight to the test case.
+        fake = FakeText(["TC-9"])
+        confirm = FakeConfirm([True])
         monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", confirm)
         monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
-        result = ask_run_id_and_test_case("en", {})
+        state = {}
+        result = ask_run_id_and_test_case("en", state)
         out = capsys.readouterr().out
         assert "run_id: 2026-09-15_14-48-57_truck-805" in out
         assert "/media/hotswap1/frontier/truck-805/" in out
-        assert fake.defaults[1] == "2026-09-15_14-48-57_truck-805"  # re-prompt default
+        # The paste prompt was skipped: only the test-case prompt happened.
+        assert len(fake.messages) == 1
+        assert "Polarion" in fake.messages[0]
         assert result == ("2026-09-15_14-48-57_truck-805", "TC-9", False)
+        # First-ever run defaults the toggle to No; the Yes is remembered.
+        assert confirm.defaults[0] is False
+        assert state["recording"]["pull_truck_run_id"] is True
 
-    def test_truck_shows_the_fallback_warning(self, monkeypatch, capsys):
-        fake = FakeText(["truck", self.TRUCK_INFO["run_id"], "skip"])
+    def test_toggle_shows_the_fallback_warning(self, monkeypatch, capsys):
+        fake = FakeText(["skip"])
         monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", FakeConfirm([True]))
         monkeypatch.setattr(
             recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO, warning="No runs today.")
         )
@@ -196,35 +230,58 @@ class TestAskRunIdAndTestCase:
         assert "⚠️  No runs today." in capsys.readouterr().out  # shown, not hidden
         assert result == ("2026-09-15_14-48-57_truck-805", "", True)
 
-    def test_truck_failure_re_prompts_for_manual_paste(self, monkeypatch, capsys):
+    def test_toggle_failure_falls_back_to_manual_paste(self, monkeypatch, capsys):
         def boom():
             raise recorder.truck.TruckError("could not SSH to applied@192.168.1.11")
 
-        fake = FakeText(["truck", "manual-42", "TC-2"])
+        fake = FakeText(["manual-42", "TC-2"])
         monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", FakeConfirm([True]))
         monkeypatch.setattr(recorder.truck, "fetch_run_id", boom)
         result = ask_run_id_and_test_case("en", {})
         out = capsys.readouterr().out
         assert "Could not fetch the run id:" in out
         assert "could not SSH" in out
-        assert fake.defaults[1] == ""  # the re-prompt came back empty
+        assert fake.defaults[0] == ""  # the paste prompt came back empty
         assert result == ("manual-42", "TC-2", False)
 
-    def test_truck_magic_word_is_case_insensitive(self, monkeypatch):
-        fake = FakeText(["TRUCK", self.TRUCK_INFO["run_id"], "TC-9"])
-        monkeypatch.setattr(recorder.questionary, "text", fake)
-        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
-        assert ask_run_id_and_test_case("en", {})[0] == "2026-09-15_14-48-57_truck-805"
+    def test_toggle_choice_is_remembered_as_the_default(self, monkeypatch):
+        # A remembered Yes pre-selects Yes; switching to No is remembered too.
+        confirm = FakeConfirm([False])
+        monkeypatch.setattr(recorder.questionary, "text", FakeText(["run-42", "TC-1"]))
+        monkeypatch.setattr(recorder.questionary, "confirm", confirm)
+        state = {"recording": {"pull_truck_run_id": True}}
+        ask_run_id_and_test_case("en", state)
+        assert confirm.defaults[0] is True  # remembered answer was the default
+        assert state["recording"]["pull_truck_run_id"] is False  # and the No was saved
 
-    def test_back_after_fetch_re_prompts_with_fetched_id(self, monkeypatch):
-        # 'back' at the test-case prompt must keep the fetched id as the
-        # default of the run-id re-prompt, and Enter accepts it again.
-        fetched = self.TRUCK_INFO["run_id"]
-        fake = FakeText(["truck", fetched, "back", fetched, "skip"])
+    def test_toggle_ctrl_c_means_no(self, monkeypatch):
+        confirm = FakeConfirm([None])
+        fake = FakeText(["run-42", "TC-1"])
         monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", confirm)
+        state = {}
+        result = ask_run_id_and_test_case("en", state)
+        assert fake.messages[0] == "Paste the run id (optional — press Enter to leave blank)"
+        assert result == ("run-42", "TC-1", False)
+        assert state["recording"]["pull_truck_run_id"] is False
+
+    def test_back_after_fetch_re_prompts_as_paste_not_toggle(self, monkeypatch):
+        # 'back' at the test-case prompt re-asks the run id with the
+        # fetched id as the paste default; the toggle is not asked again.
+        fetched = self.TRUCK_INFO["run_id"]
+        fake = FakeText(["back", fetched, "skip"])
+        confirm = FakeConfirm([True])
+        monkeypatch.setattr(recorder.questionary, "text", fake)
+        monkeypatch.setattr(recorder.questionary, "confirm", confirm)
         monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
         result = ask_run_id_and_test_case("en", {})
-        assert fake.defaults[-2] == fetched  # the run-id re-prompt after 'back'
+        assert len(confirm.messages) == 1  # toggle asked exactly once
+        # Prompt order: test case, then (after 'back') the paste — whose
+        # default is the fetched id.
+        assert "Polarion" in fake.messages[0]
+        assert fake.messages[1] == "Paste the run id (optional — press Enter to leave blank)"
+        assert fake.defaults[1] == fetched
         assert result == (fetched, "", True)
 
 

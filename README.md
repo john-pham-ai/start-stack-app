@@ -84,7 +84,7 @@ The whole thing is driven by single keypresses — no Enter needed except at the
 1. Press **`r`** to start recording, or **`q`** to skip it entirely.
 2. Once started, the terminal shows a live `● Recording... 00:07 (press 's' to stop)` line that ticks up every second so you can tell it's actually running. Perform your test run, then press **`s`** to stop.
 3. You're asked **keep or discard**: press **`k`** to keep it and continue, or **`d`** to throw it away — the file is deleted immediately and you're done, no naming prompts.
-4. If you kept it, you're asked to paste a **run id** (optional — leave it blank to skip, or type `truck` to fetch the latest run id off the cabled truck; it's printed first so you can sanity-check it, then one Enter accepts it).
+4. If you kept it, a Yes/No toggle asks whether to **pull the latest run id from the truck** — the answer is remembered and pre-selected next time. Yes fetches it off the cabled truck and prints the vehicle, hostname, run id, full log path and any warning before moving on (a `back` at the next prompt re-asks the run id as a paste with the fetched id as the default); No — or a failed fetch — gives the manual paste prompt (optional — leave it blank to skip).
 5. You're asked for a **Polarion test case id**. Type it, or:
    - `back` — re-enter the run id
    - `skip` (or just press Enter) — no test case id for this recording
@@ -106,6 +106,7 @@ With the laptop cabled to a test truck, any of the three interfaces can grab the
 - the standalone script — `./truck.sh [vehicle]`, or just `truck` from anywhere once the alias is set up (added automatically on first run, same as `launch`/`recorder`). It prints the run id, the full log path and the truck's hostname, and exits 1 with a readable error when the truck is unreachable.
 - the TUI wizard — **Fetch the latest Run ID from the truck** on the start menu prints the same information, puts the run id on your clipboard, and returns you to the menu.
 - the web UI — the **Fetch Run ID from truck** button under the form (the vehicle in the form field is a cross-check; the fetched run id shows up with a copy button).
+- the recording flow — the Yes/No **pull-the-run-id-from-the-truck** toggle after keeping a recording (remembered between runs, like the other recording choices).
 
 The truck this works against is the one the SSH target points at (`applied@192.168.1.11` by default) — the truck identifies itself by hostname (`truck-805-primarypc`), so the fetch knows which vehicle it's connected to. The log layout is `/media/hotswap1/frontier/truck-<N>/<year>/<month>/<day>/<run_id>`, and the newest run of the truck's *today* is preferred — if there's none yet today, the newest overall is used with a visible warning.
 

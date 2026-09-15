@@ -49,9 +49,13 @@ TRANSLATIONS = {
         "ja": "この録画を保存しますか、破棄しますか？（k = 保存、d = 破棄）： ",
     },
     "recording_discarded": {"en": "Recording discarded.", "ja": "録画を破棄しました。"},
+    "pull_truck_prompt": {
+        "en": "Pull the latest run id from the truck?",
+        "ja": "トラックから最新の run id を取得しますか？",
+    },
     "run_id_prompt": {
-        "en": "Paste the run id (optional — press Enter to leave blank, or type 'truck' to fetch the latest from the truck)",
-        "ja": "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ、'truck' と入力するとトラックから最新を取得）",
+        "en": "Paste the run id (optional — press Enter to leave blank)",
+        "ja": "run-id を貼り付けてください（任意 — 空欄のまま Enter でスキップ）",
     },
     "test_case_prompt": {
         "en": "Paste the Polarion test case id (type 'skip' for none, 'back' to re-enter the run id)",

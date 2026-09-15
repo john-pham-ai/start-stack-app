@@ -628,25 +628,41 @@ def fetch_truck_run_id(lang):
 
 
 def ask_run_id_and_test_case(lang, state):
-    """Ask for the run id, then the Polarion test case id, updating state.
+    """Ask the pull-or-paste toggle, the run id, then the test case id.
 
-    Typing 'truck' at the run id prompt fetches the latest run id off the
-    cabled truck (see truck.py) and re-prompts with it as the default, so
-    one Enter accepts it. 'back' at the test case prompt re-asks the run
-    id; 'skip' (or leaving it blank) means no test case id. The skip choice
-    is remembered in state so it's the default next time, as is the last
-    test case id used.
+    First a Yes/No toggle: pull the latest run id off the cabled truck?
+    The answer is remembered in state and pre-selected next time. Yes
+    fetches and prints it (vehicle, hostname, run id, full log path, any
+    warning), then goes straight to the test case prompt; a failed fetch
+    falls back to the paste prompt. No gives the paste prompt directly
+    (optional — leave it blank to skip). 'back' at the test case prompt
+    re-asks the run id as a paste with the current value as the default —
+    the toggle isn't asked again within the same flow. The skip choice for
+    the test case is remembered too, as is the last test case id used.
 
     Returns (run_id, test_case_id, skipped_polarion).
     """
     recording_state = state.setdefault("recording", {})
+    toggle_done = False
     run_id = ""
     while True:
-        answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
-        run_id = (answer or "").strip()
-        if run_id.lower() == "truck":
-            run_id = fetch_truck_run_id(lang)
-            continue  # re-prompt with the fetched id as the default
+        fetched = ""
+        if not toggle_done:
+            pull = questionary.confirm(
+                t(lang, "pull_truck_prompt"),
+                default=recording_state.get("pull_truck_run_id", False),
+            ).ask()
+            if pull is None:  # Ctrl-C at the toggle — same as a No
+                pull = False
+            recording_state["pull_truck_run_id"] = bool(pull)
+            toggle_done = True
+            if pull:
+                fetched = fetch_truck_run_id(lang)  # "" if it failed
+                run_id = fetched
+
+        if not fetched:
+            answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
+            run_id = (answer or "").strip()
 
         skip_default = recording_state.get("skip_polarion", False)
         default_tc = "skip" if skip_default else recording_state.get("last_test_case_id", "")
