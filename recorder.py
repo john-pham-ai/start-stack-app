@@ -5,8 +5,16 @@ recording, the file has a temporary name; once the run is over it's renamed to
 carry the run id and the Polarion test case it covers, and a sidecar .json is
 written next to it with the Polarion link and the command that was built.
 
-Requires ffmpeg on PATH, and Screen Recording permission for your terminal
-(System Settings > Privacy & Security > Screen & System Audio Recording).
+Capture backends, picked automatically per machine:
+
+- macOS            ffmpeg's avfoundation (needs Screen Recording permission for
+                   your terminal in System Settings > Privacy & Security)
+- Linux, X11       ffmpeg's x11grab
+- Linux, Wayland    gpu-screen-recorder (KDE/GNOME desktops) or wf-recorder
+                   (wlroots compositors such as Sway/Hyprland)
+
+Missing tools are auto-installed when a supported package manager (brew, apt,
+dnf, pacman) is available; otherwise the error explains what to install.
 """
 
 import contextlib
@@ -14,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import termios
@@ -26,6 +35,7 @@ from datetime import datetime
 import questionary
 
 from state import load_state, save_state
+from translations import t
 
 # Where dated recording folders are created. Override with the env var.
 RECORDINGS_DIR = os.path.expanduser(os.environ.get("RECORDINGS_DIR", "~/screen_recordings"))
@@ -41,26 +51,109 @@ POLARION_URL_TEMPLATE = os.environ.get(
 IN_PROGRESS_NAME = ".recording-in-progress"
 MAX_PART_LEN = 60
 
+# Package managers we can auto-install with, in the order we prefer them.
+INSTALLERS = [
+    ("brew", ["brew", "install", "{pkg}"]),
+    ("apt", ["sudo", "apt-get", "install", "-y", "{pkg}"]),
+    ("dnf", ["sudo", "dnf", "install", "-y", "{pkg}"]),
+    ("pacman", ["sudo", "pacman", "-S", "--needed", "--noconfirm", "{pkg}"]),
+]
+
+# Compositors whose screenshare protocol (zwlr_screencopy) wf-recorder needs.
+WLROOTS_DESKTOPS = ("SWAY", "HYPRLAND", "RIVER", "LABWC", "WAYFIRE", "NIRI", "WESTON")
+
 
 class RecordingError(Exception):
-    """ffmpeg could not be started, or died before we could stop it."""
+    """The capture tool could not be started, or died before we could stop it."""
+
+
+# --- capture backend detection -----------------------------------------------
+
+
+def _desktop():
+    return os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+
+
+def _is_wayland():
+    return bool(os.environ.get("WAYLAND_DISPLAY")) or os.environ.get("XDG_SESSION_TYPE") == "wayland"
+
+
+def _is_x11():
+    return not _is_wayland() and (
+        bool(os.environ.get("DISPLAY")) or os.environ.get("XDG_SESSION_TYPE") == "x11"
+    )
+
+
+def _preferred_wayland_tools():
+    """Capture tools for this Wayland session, in the order we'd rather use them.
+
+    wf-recorder only understands wlroots compositors; KDE/GNOME Wayland need
+    gpu-screen-recorder (which talks to the xdg-desktop-portal instead).
+    """
+    desktop = _desktop()
+    if any(name in desktop for name in WLROOTS_DESKTOPS):
+        return "wf-recorder", "gpu-screen-recorder"
+    return "gpu-screen-recorder", "wf-recorder"
+
+
+def detect_capture_backend():
+    """Return (backend, capture_input, install_hint) for this machine.
+
+    backend is one of "avfoundation", "x11grab", "gpu-screen-recorder",
+    "wf-recorder" — or None, with install_hint explaining what's missing.
+    """
+    if sys.platform == "darwin":
+        return "avfoundation", None, None
+
+    if _is_wayland():
+        for tool in _preferred_wayland_tools():
+            if shutil.which(tool):
+                return tool, None, None
+        preferred = _preferred_wayland_tools()[0]
+        _label, command = _installer_for(preferred)
+        how = "'{}'".format(" ".join(command)) if command else f"'{preferred}'"
+        return (
+            None,
+            None,
+            f"Wayland screen capture needs '{preferred}'. Install it (e.g. {how}) and try again.",
+        )
+
+    if _is_x11():
+        return "x11grab", os.environ.get("DISPLAY") or ":0", None
+
+    return None, None, "No graphical session found (neither Wayland nor X11) — can't record the screen."
+
+
+# --- dependency management ----------------------------------------------------
 
 
 def ffmpeg_available():
     return shutil.which("ffmpeg") is not None
 
 
-def _find_installer():
-    """Pick a package manager to install ffmpeg with, based on what's on PATH."""
-    if shutil.which("brew"):
-        return "Homebrew", ["brew", "install", "ffmpeg"]
-    if shutil.which("apt-get"):
-        return "apt", ["sudo", "apt-get", "install", "-y", "ffmpeg"]
-    if shutil.which("dnf"):
-        return "dnf", ["sudo", "dnf", "install", "-y", "ffmpeg"]
-    if shutil.which("pacman"):
-        return "pacman", ["sudo", "pacman", "-S", "--noconfirm", "ffmpeg"]
+def _installer_for(pkg):
+    """Pick a package-manager install command for pkg, based on what's on PATH."""
+    for pm, template in INSTALLERS:
+        if shutil.which(pm):
+            return pm, [part.format(pkg=pkg) for part in template]
     return None, None
+
+
+def _try_install(pkg):
+    """Install pkg with whatever package manager is around. Returns (ok, hint)."""
+    if shutil.which(pkg):
+        return True, None
+    label, command = _installer_for(pkg)
+    if command is None:
+        return False, f"'{pkg}' is not installed and no supported package manager was found."
+    print(f"{pkg} not found — installing it with {label} (this may take a minute)...")
+    try:
+        subprocess.run(command, check=True)
+    except (subprocess.CalledProcessError, OSError):
+        return False, f"Could not install '{pkg}' automatically — install it yourself and try again."
+    if not shutil.which(pkg):
+        return False, f"'{pkg}' was installed but still isn't on PATH — open a new terminal and try again."
+    return True, None
 
 
 def ensure_ffmpeg():
@@ -69,20 +162,35 @@ def ensure_ffmpeg():
     Returns True if ffmpeg is available (already, or after installing it),
     False if it's still missing and needs to be installed by hand.
     """
-    if ffmpeg_available():
-        return True
+    ok, _hint = _try_install("ffmpeg")
+    return ok
 
-    label, command = _find_installer()
-    if command is None:
-        return False
 
-    print(f"ffmpeg not found — installing it with {label} (this may take a minute)...")
-    try:
-        subprocess.run(command, check=True)
-    except (subprocess.CalledProcessError, OSError):
-        return False
+def ensure_recording_deps():
+    """Make sure this machine has what it needs to record the screen.
 
-    return ffmpeg_available()
+    Returns (ok, hint): ok is True when a capture backend is ready to go;
+    otherwise hint explains what to install.
+    """
+    backend, _capture_input, hint = detect_capture_backend()
+    if backend is None:
+        # On Wayland the missing piece is the capture tool — try to install it.
+        if _is_wayland():
+            preferred = _preferred_wayland_tools()[0]
+            ok, hint = _try_install(preferred)
+            if ok:
+                return True, None
+        return False, hint
+
+    if backend in ("avfoundation", "x11grab"):
+        if not ensure_ffmpeg():
+            _label, command = _installer_for("ffmpeg")
+            how = "'{}'".format(" ".join(command)) if command else "e.g. 'brew install ffmpeg'"
+            return False, f"ffmpeg could not be installed automatically — install it yourself ({how}) and try again."
+    return True, None
+
+
+# --- capture -----------------------------------------------------------------
 
 
 def find_screen_device():
@@ -155,6 +263,10 @@ def polarion_url(test_case_id):
 class ScreenRecording:
     """One screen recording: start() -> stop() -> finalize()."""
 
+    # How stop() asks the capture process to finish:
+    STOP_FFMPEG_STDIN = "ffmpeg-stdin"  # send 'q' on stdin
+    STOP_SIGINT = "sigint"  # send SIGINT
+
     def __init__(self, base=None, now=None):
         self.now = now or datetime.now()
         self.folder = today_folder(base, self.now)
@@ -162,48 +274,117 @@ class ScreenRecording:
         self.proc = None
         self.duration_seconds = None
         self._started_at = None
+        self._stop_mode = None
 
-    def _command(self, device, framerate):
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "avfoundation"]
-        cmd += ["-capture_cursor", "1"]
-        if framerate:
-            cmd += ["-framerate", "30"]
-        cmd += ["-i", f"{device}:none"]
-        cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
-        cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart"]
-        cmd += [self.temp_path]
+    def _ffmpeg_command(self, capture_args):
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        cmd += capture_args
+        # Shared output settings: fast to encode, playable everywhere, and
+        # +faststart writes the index at the front so the file is fine even
+        # if the copy gets interrupted.
+        cmd += [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            self.temp_path,
+        ]
         return cmd
 
-    def _spawn(self, device, framerate):
+    def _spawn(self, cmd, stdin=subprocess.PIPE):
         proc = subprocess.Popen(
-            self._command(device, framerate),
-            stdin=subprocess.PIPE,
+            cmd,
+            stdin=stdin,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        # If the capture settings are rejected, ffmpeg exits almost immediately.
+        # If the capture settings are rejected, the process exits almost
+        # immediately.
         time.sleep(1.5)
         if proc.poll() is not None:
             return None, (proc.stderr.read() or b"").decode(errors="replace").strip()
         return proc, None
 
-    def start(self):
-        if not ffmpeg_available():
-            raise RecordingError("ffmpeg is not installed or not on PATH (try: brew install ffmpeg).")
-        device = find_screen_device()
-        if device is None:
-            raise RecordingError("Could not find a screen capture device in ffmpeg's avfoundation list.")
-
+    def _start_avfoundation(self, device):
         # Not every machine accepts an explicit framerate for screen capture,
         # so fall back to letting the device pick its own.
-        proc, error = self._spawn(device, framerate=True)
-        if proc is None:
-            proc, error = self._spawn(device, framerate=False)
+        error = None
+        for extra in (["-framerate", "30"], []):
+            cmd = self._ffmpeg_command(
+                ["-f", "avfoundation", "-capture_cursor", "1"] + extra + ["-i", f"{device}:none"]
+            )
+            proc, error = self._spawn(cmd)
+            if proc is not None:
+                return proc, self.STOP_FFMPEG_STDIN
+        raise RecordingError(error or "ffmpeg exited immediately after starting.")
+
+    def _start_x11grab(self, display):
+        cmd = self._ffmpeg_command(["-f", "x11grab", "-framerate", "30", "-draw_mouse", "1", "-i", display])
+        proc, error = self._spawn(cmd)
         if proc is None:
             raise RecordingError(error or "ffmpeg exited immediately after starting.")
+        return proc, self.STOP_FFMPEG_STDIN
 
-        self.proc = proc
+    def _gsr_portal_token_path(self):
+        # One token per recordings root: the screen-share approval dialog
+        # appears on the first recording only, then gsr restores the session
+        # from this file on its own.
+        return os.path.join(os.path.dirname(self.folder), ".gsr-portal-session")
+
+    def _start_tool(self, backend):
+        if backend == "gpu-screen-recorder":
+            cmd = [
+                "gpu-screen-recorder",
+                "-w", "portal",
+                "-restore-portal-session", "yes",
+                "-portal-session-token-filepath", self._gsr_portal_token_path(),
+                "-c", "mp4",  # container (this gsr version's -f is framerate)
+                "-f", "30",
+                "-o", self.temp_path,
+            ]
+        else:  # wf-recorder
+            cmd = ["wf-recorder", "-f", self.temp_path]
+        proc, error = self._spawn(cmd, stdin=subprocess.DEVNULL)
+        if proc is None:
+            raise RecordingError(error or f"{backend} exited immediately after starting.")
+        return proc, self.STOP_SIGINT
+
+    def start(self):
+        """Start capturing. Returns the temporary file being written."""
+        backend, capture_input, hint = detect_capture_backend()
+        if backend is None:
+            raise RecordingError(hint or "No screen capture backend available on this system.")
+
+        # Start the clock before the ~1.5s spawn check: the capture process
+        # is already recording by the time we're sure it started, and the
+        # file always ends up slightly longer than the on-screen timer.
         self._started_at = time.monotonic()
+
+        if backend == "avfoundation":
+            if not ffmpeg_available():
+                raise RecordingError("ffmpeg is not installed or not on PATH (try: brew install ffmpeg).")
+            device = find_screen_device()
+            if device is None:
+                raise RecordingError(
+                    "Could not find a screen capture device in ffmpeg's avfoundation list."
+                )
+            self.proc, self._stop_mode = self._start_avfoundation(device)
+        elif backend == "x11grab":
+            if not ffmpeg_available():
+                raise RecordingError(
+                    "ffmpeg is not installed or not on PATH "
+                    "(try: sudo apt-get install ffmpeg / sudo pacman -S ffmpeg)."
+                )
+            self.proc, self._stop_mode = self._start_x11grab(capture_input)
+        else:
+            self.proc, self._stop_mode = self._start_tool(backend)
+
         return self.temp_path
 
     def elapsed_seconds(self):
@@ -212,18 +393,24 @@ class ScreenRecording:
         return time.monotonic() - self._started_at
 
     def stop(self):
-        """Ask ffmpeg to finish writing, so the .mp4 ends up playable."""
+        """Ask the capture process to finish writing, so the .mp4 ends up playable."""
         if self.proc is None:
             return None
         if self._started_at is not None:
             self.duration_seconds = round(time.monotonic() - self._started_at, 1)
 
         if self.proc.poll() is None:
-            try:
-                self.proc.stdin.write(b"q")
-                self.proc.stdin.flush()
-            except (BrokenPipeError, OSError):
-                pass
+            if self._stop_mode == self.STOP_FFMPEG_STDIN:
+                try:
+                    self.proc.stdin.write(b"q")
+                    self.proc.stdin.flush()
+                except (BrokenPipeError, OSError):
+                    pass
+            else:
+                try:
+                    self.proc.send_signal(signal.SIGINT)
+                except (ProcessLookupError, OSError):
+                    pass
             try:
                 self.proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
@@ -232,10 +419,12 @@ class ScreenRecording:
                     self.proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
-        try:
-            self.proc.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
+
+        if self._stop_mode == self.STOP_FFMPEG_STDIN:
+            try:
+                self.proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
         return self.duration_seconds
 
     def discard(self):
@@ -269,6 +458,9 @@ class ScreenRecording:
             json.dump(record, f, indent=2)
             f.write("\n")
         return video_path, sidecar_path
+
+
+# --- interactive plumbing ----------------------------------------------------
 
 
 @contextlib.contextmanager
@@ -357,37 +549,87 @@ def hyperlink(path, label=None):
     return f"\x1b]8;;{uri}\x1b\\{text}\x1b]8;;\x1b\\"
 
 
-def _ask_run_id_and_test_case(state):
-    """Same run id / test case id mini-wizard launch.py uses, standalone.
+def run_recording_flow(lang, state, vehicle_name="", metadata=None):
+    """One full recording session: ask, record, stop, keep/name/finalize.
 
-    'back' at the test case prompt re-asks the run id; 'skip' (or blank)
-    means no test case id, and that choice is remembered in state.
+    This is the recording half of the wizard (launch.py) and the entirety
+    of the standalone `recorder` entry point — one flow, so they stay
+    identical. Prompts use the given language.
+
+    Returns (video_path, sidecar_path) when a recording was kept and
+    finalized; None when recording was skipped, failed, or discarded.
+    """
+    ready, hint = ensure_recording_deps()
+    if not ready:
+        print(t(lang, "record_setup_failed") + " " + (hint or "") + "\n")
+        return None
+
+    with keypress_mode():
+        if not wait_for_start(t(lang, "record_prompt")):
+            return None
+
+        try:
+            recording = ScreenRecording()
+            recording.start()
+        except RecordingError as exc:
+            print(t(lang, "record_failed") + " " + str(exc) + "\n")
+            return None
+
+        print(t(lang, "record_started") + "\n")
+        try:
+            wait_for_stop(recording, label=t(lang, "recording_label"), hint=t(lang, "press_s_to_stop"))
+        finally:
+            recording.stop()
+
+        if not wait_for_keep_or_discard(t(lang, "keep_or_discard_prompt")):
+            recording.discard()
+            print(t(lang, "recording_discarded") + "\n")
+            return None
+
+    run_id, test_case_id, _skipped = ask_run_id_and_test_case(lang, state)
+    video_path, sidecar_path = recording.finalize(
+        vehicle_name=vehicle_name, run_id=run_id, test_case_id=test_case_id, metadata=metadata
+    )
+    save_state(state)
+
+    print(t(lang, "recording_saved") + " " + video_path)
+    print(sidecar_path)
+    print(hyperlink(os.path.dirname(video_path), label=t(lang, "open_folder")) + "\n")
+    url = polarion_url(test_case_id)
+    if url:
+        print(t(lang, "polarion_link") + " " + url + "\n")
+    return video_path, sidecar_path
+
+
+def ask_run_id_and_test_case(lang, state):
+    """Ask for the run id, then the Polarion test case id, updating state.
+
+    'back' at the test case prompt re-asks the run id; 'skip' (or leaving
+    it blank) means no test case id. The skip choice is remembered in state
+    so it's the default next time, as is the last test case id used.
+
+    Returns (run_id, test_case_id, skipped_polarion).
     """
     recording_state = state.setdefault("recording", {})
     run_id = ""
     while True:
-        answer = questionary.text(
-            "Paste the run id (optional — press Enter to leave blank):", default=run_id
-        ).ask()
-        if answer is None:
-            return run_id, "", True
-        run_id = answer.strip()
+        answer = questionary.text(t(lang, "run_id_prompt"), default=run_id).ask()
+        run_id = (answer or "").strip()
 
         skip_default = recording_state.get("skip_polarion", False)
         default_tc = "skip" if skip_default else recording_state.get("last_test_case_id", "")
-        tc_answer = questionary.text(
-            "Paste the Polarion test case id (type 'skip' for none, 'back' to re-enter the run id):",
-            default=default_tc,
-        ).ask()
-        if tc_answer is None:
-            return run_id, "", True
-        tc_answer = tc_answer.strip()
+        tc_answer = questionary.text(t(lang, "test_case_prompt"), default=default_tc).ask()
+        tc_answer = (tc_answer or "").strip()
 
         if tc_answer.lower() == "back":
             continue
-        if tc_answer.lower() == "skip" or tc_answer == "":
-            return run_id, "", True
-        return run_id, tc_answer, False
+        skipped = tc_answer.lower() == "skip" or tc_answer == ""
+
+        recording_state["skip_polarion"] = skipped
+        test_case_id = "" if skipped else tc_answer
+        if not skipped and test_case_id:
+            recording_state["last_test_case_id"] = test_case_id
+        return run_id, test_case_id, skipped
 
 
 def main():
@@ -395,55 +637,10 @@ def main():
 
     Run via `./recorder.sh` (aliased to `recorder`) when you just want to
     capture a screen recording without going through the full start_stack
-    command wizard.
+    command wizard — or from the wizard itself, via "Record the screen only"
+    on its first menu.
     """
-    state = load_state()
-
-    if not ensure_ffmpeg():
-        print(
-            "Could not install ffmpeg automatically. Install it yourself "
-            "(e.g. 'brew install ffmpeg') and try again.\n"
-        )
-        return
-
-    with keypress_mode():
-        if not wait_for_start():
-            return
-
-        try:
-            recording = ScreenRecording()
-            recording.start()
-        except RecordingError as exc:
-            print(f"Could not start recording: {exc}\n")
-            return
-
-        print("Recording started.\n")
-        try:
-            wait_for_stop(recording)
-        finally:
-            recording.stop()
-
-        keep = wait_for_keep_or_discard()
-
-    if not keep:
-        recording.discard()
-        print("Recording discarded.\n")
-        return
-
-    run_id, test_case_id, skipped_polarion = _ask_run_id_and_test_case(state)
-    video_path, sidecar_path = recording.finalize(run_id=run_id, test_case_id=test_case_id)
-
-    state["recording"]["skip_polarion"] = skipped_polarion
-    if not skipped_polarion and test_case_id:
-        state["recording"]["last_test_case_id"] = test_case_id
-    save_state(state)
-
-    print(f"Recording saved: {video_path}")
-    print(sidecar_path)
-    print(hyperlink(os.path.dirname(video_path), label="Open recording folder") + "\n")
-    url = polarion_url(test_case_id)
-    if url:
-        print(f"Polarion link: {url}\n")
+    run_recording_flow("en", load_state())
 
 
 if __name__ == "__main__":

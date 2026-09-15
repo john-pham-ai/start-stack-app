@@ -10,7 +10,6 @@ TRANSLATIONS = {
         "ja": "（戻るには back、終了するには quit と入力）",
     },
     "launch_config": {"en": "launch_config", "ja": "起動設定（launch_config）"},
-    "map_key": {"en": "map_key (optional)", "ja": "マップキー（map_key・任意）"},
     "route": {"en": "route (optional)", "ja": "ルート（route・任意）"},
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
@@ -32,9 +31,9 @@ TRANSLATIONS = {
         "en": "Record the screen for this run? Press 'r' to start, or 'q' to skip: ",
         "ja": "この実行の画面を録画しますか？ 開始するには 'r'、スキップするには 'q' を押してください： ",
     },
-    "ffmpeg_missing": {
-        "en": "(Could not install ffmpeg automatically — skipping screen recording. Install it yourself, e.g. 'brew install ffmpeg', then run this again.)",
-        "ja": "（ffmpeg を自動インストールできなかったため、画面録画をスキップします。'brew install ffmpeg' などで手動インストールしてから、もう一度実行してください。）",
+    "record_setup_failed": {
+        "en": "(Could not set up screen recording — skipping it.)",
+        "ja": "（画面録画をセットアップできなかったため、スキップします。）",
     },
     "record_failed": {
         "en": "Could not start recording:",
@@ -62,6 +61,27 @@ TRANSLATIONS = {
     "recording_saved": {"en": "Recording saved:", "ja": "録画を保存しました："},
     "open_folder": {"en": "Open recording folder", "ja": "録画フォルダを開く"},
     "polarion_link": {"en": "Polarion link:", "ja": "Polarion リンク："},
+    "menu_prompt": {"en": "What do you want to do?", "ja": "何をしますか？"},
+    "start_new": {"en": "Build a new command", "ja": "新しいコマンドを作成"},
+    "record_only": {"en": "Record the screen only", "ja": "画面録画のみ"},
+    "preset_label": {"en": "Preset", "ja": "プリセット"},
+    "recent_label": {"en": "Recent", "ja": "最近"},
+    "recent_heading": {"en": "Recent commands", "ja": "最近のコマンド"},
+    "save_preset_prompt": {
+        "en": "Save these choices as a preset?",
+        "ja": "この選択内容をプリセットとして保存しますか？",
+    },
+    "preset_name_prompt": {
+        "en": "Preset name (leave blank to cancel)",
+        "ja": "プリセット名（空欄でキャンセル）",
+    },
+    "preset_saved": {"en": "Preset saved:", "ja": "プリセットを保存しました："},
+    "preset_name_label": {"en": "Preset name", "ja": "プリセット名"},
+    "save_as_preset": {"en": "Save as preset", "ja": "プリセットとして保存"},
+    "invalid_option_note": {
+        "en": "(dropped saved values that no longer exist: {})",
+        "ja": "（存在しなくなった保存値を除外しました：{}）",
+    },
 }
 
 
