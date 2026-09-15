@@ -268,6 +268,18 @@ def _authorized_keys_script():
     )
 
 
+def classify_install_detail(detail):
+    """A short, correct diagnosis from ssh's stderr: an unreachable truck
+    (the usual case when the laptop isn't cabled) must not be reported as
+    'your key was not accepted'."""
+    d = (detail or "").lower()
+    if "timed out" in d or "timeout" in d:
+        return "could not reach the truck (connection timed out) — check the cable/network"
+    if "refused" in d or "unreachable" in d or "no route" in d:
+        return f"could not reach the truck ({detail})"
+    return f"your existing key was not accepted ({detail})"
+
+
 def _install_key(vehicle, public_key, password="", timeout=SETUP_TIMEOUT):
     """Push the public key to the truck. Returns (installed, detail).
 
@@ -311,7 +323,10 @@ def _install_key(vehicle, public_key, password="", timeout=SETUP_TIMEOUT):
     if installed:
         return True, "installed using your existing SSH key/agent"
     if not password:
-        return False, "your existing key was not accepted and no password was given (" + detail + ")"
+        diagnosed = classify_install_detail(detail)
+        if "key was not accepted" in diagnosed:
+            diagnosed += " — give the truck's login password to install the key"
+        return False, diagnosed
 
     # Attempt 2: the one-time password, through an askpass helper.
     with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
@@ -333,7 +348,9 @@ def _install_key(vehicle, public_key, password="", timeout=SETUP_TIMEOUT):
         os.remove(askpass)
     if installed:
         return True, "installed using the password you entered"
-    return False, "the password was not accepted (" + detail + ")"
+    return False, classify_install_detail(detail).replace(
+        "your existing key was not accepted", "the password was not accepted"
+    )
 
 
 def setup_ssh(vehicle, password=""):
@@ -432,12 +449,16 @@ def main(argv):
                 print(f"error: {err}", file=sys.stderr)
             return 1
         # The install is the only step that can need a password; ask once,
-        # off any command line (getpass), and retry just that step.
+        # off any command line (getpass), and retry just that step. A closed
+        # or non-interactive stdin (or Ctrl-C/Ctrl-D) just skips the retry.
         if not res["key_installed"] and not as_json:
-            password = getpass.getpass(
-                "Your existing SSH key was not accepted. Truck login password "
-                "(Enter to skip and do it by hand): "
-            )
+            try:
+                password = getpass.getpass(
+                    "Truck login password (Enter to skip and do it by hand): "
+                )
+            except (EOFError, KeyboardInterrupt):
+                print("")
+                password = ""
             if password:
                 res["key_installed"], res["install_detail"] = _install_key(
                     args[1], res["public_key"], password

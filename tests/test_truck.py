@@ -291,3 +291,71 @@ class TestSetupCLI:
     def test_setup_usage_without_number(self, capsys):
         assert main(["setup"]) == 1
         assert "usage" in capsys.readouterr().err
+
+
+class TestInstallDiagnosis:
+    def test_classify_install_detail(self):
+        from truck import classify_install_detail
+        assert "could not reach the truck" in classify_install_detail(
+            "ssh: connect to host 192.168.1.11 port 22: Connection timed out")
+        assert "could not reach the truck" in classify_install_detail(
+            "ssh: connect to host 192.168.1.11 port 22: Connection refused")
+        assert "your existing key was not accepted" in classify_install_detail(
+            "Permission denied (publickey,password)")
+
+    def test_unreachable_is_not_reported_as_key_rejection(self, setup_env, monkeypatch):
+        env = setup_env
+        monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+        script = (env.parent / "bin" / "ssh").read_text().replace(
+            'cat >/dev/null',
+            "cat >/dev/null; echo 'ssh: connect to host 192.168.1.11 port 22: Connection timed out' >&2",
+        )
+        (env.parent / "bin" / "ssh").write_text(script)
+        (env.parent / "bin" / "ssh").chmod(0o755)
+        res = setup_ssh("805")
+        assert not res["key_installed"]
+        assert "could not reach the truck" in res["install_detail"]
+        assert "key was not accepted" not in res["install_detail"]
+
+    def test_rejected_key_suggests_the_password(self, setup_env, monkeypatch):
+        env = setup_env
+        monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+        script = (env.parent / "bin" / "ssh").read_text().replace(
+            'cat >/dev/null',
+            "cat >/dev/null; echo 'Permission denied (publickey,password)' >&2",
+        )
+        (env.parent / "bin" / "ssh").write_text(script)
+        (env.parent / "bin" / "ssh").chmod(0o755)
+        res = setup_ssh("805")
+        assert "your existing key was not accepted" in res["install_detail"]
+        assert "give the truck's login password" in res["install_detail"]
+
+
+class TestSetupCLIEdgeCases:
+    def test_non_tty_stdin_does_not_crash(self, setup_env, monkeypatch, capsys):
+        # getpass with a closed/non-interactive stdin (or Ctrl-D/Ctrl-C)
+        # must skip the retry, not traceback.
+        import truck as truck_module
+        monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+
+        def eof(prompt=""):
+            raise EOFError
+
+        monkeypatch.setattr(truck_module.getpass, "getpass", eof)
+        assert main(["setup", "805"]) == 1
+        out = capsys.readouterr()
+        assert "public key not installed" in out.out
+        assert "ssh-copy-id" in out.out  # the manual next step is shown
+        assert "Traceback" not in out.out and "Traceback" not in out.err
+
+    def test_ctrl_c_at_password_skips_gracefully(self, setup_env, monkeypatch, capsys):
+        import truck as truck_module
+        monkeypatch.setenv("FAKE_SSH_EXIT", "255")
+
+        def interrupted(prompt=""):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(truck_module.getpass, "getpass", interrupted)
+        assert main(["setup", "805"]) == 1  # no traceback, the next step is shown
+        out = capsys.readouterr()
+        assert "ssh-copy-id" in out.out
