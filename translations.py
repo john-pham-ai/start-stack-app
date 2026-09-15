@@ -75,6 +75,25 @@ TRANSLATIONS = {
     "truck_fetch_btn": {"en": "Fetch Run ID from truck", "ja": "トラックから実行IDを取得"},
     "truck_run_heading": {"en": "Latest run on the truck", "ja": "トラック上の最新ラン"},
     "truck_error_prefix": {"en": "Could not fetch the run id:", "ja": "実行IDを取得できませんでした："},
+    "truck_setup_error_prefix": {"en": "Could not set up SSH:", "ja": "SSHをセットアップできませんでした："},
+    "truck_setup_menu": {
+        "en": "Set up SSH for a truck (one-time per truck)",
+        "ja": "トラックのSSHをセットアップ（トラックごとに1回）",
+    },
+    "truck_setup_vehicle_prompt": {
+        "en": "Truck number to set up SSH for (the identity and alias are named after it, e.g. 805)",
+        "ja": "SSHをセットアップするトラック番号（鍵とエイリアスはこの番号の名前になります。例: 805）",
+    },
+    "truck_setup_password_prompt": {
+        "en": "Your existing SSH key was not accepted. Truck login password (Enter to skip and do it by hand):",
+        "ja": "普段のSSH鍵が使えませんでした。トラックのログインパスワード（Enterでスキップして手動で実行）：",
+    },
+    "truck_setup_btn": {"en": "Set up SSH for truck", "ja": "トラックのSSHをセットアップ"},
+    "truck_setup_heading": {"en": "Truck SSH setup", "ja": "トラックSSHセットアップ"},
+    "truck_setup_installed": {
+        "en": "public key installed",
+        "ja": "公開鍵をインストールしました",
+    },
     "preset_label": {"en": "Preset", "ja": "プリセット"},
     "recent_label": {"en": "Recent", "ja": "最近"},
     "recent_heading": {"en": "Recent commands", "ja": "最近のコマンド"},

@@ -26,6 +26,7 @@ QUIT = object()
 NEW = object()  # "build a new command" on the start menu
 RECORD_ONLY = object()  # "record the screen only" on the start menu
 TRUCK_RUN = object()  # "fetch the latest run id from the truck" on the start menu
+TRUCK_SETUP = object()  # "set up SSH for a truck" on the start menu
 SAVE_CUSTOM = object()  # "save a custom command as a preset" on the start menu
 REMOVE_PRESET = object()  # "remove a preset" on the start menu
 
@@ -119,6 +120,7 @@ def ask_start_menu(state, lang):
         Choice(title=t(lang, "start_new"), value=NEW),
         Choice(title=t(lang, "record_only"), value=RECORD_ONLY),
         Choice(title=t(lang, "truck_run_menu"), value=TRUCK_RUN),
+        Choice(title=t(lang, "truck_setup_menu"), value=TRUCK_SETUP),
         Choice(title=t(lang, "save_custom_preset"), value=SAVE_CUSTOM),
     ]
     for name, entry in presets.items():
@@ -136,7 +138,7 @@ def ask_start_menu(state, lang):
     answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
     if answer is None or answer is QUIT:
         return QUIT
-    if answer in (NEW, RECORD_ONLY, TRUCK_RUN, SAVE_CUSTOM, REMOVE_PRESET):
+    if answer in (NEW, RECORD_ONLY, TRUCK_RUN, TRUCK_SETUP, SAVE_CUSTOM, REMOVE_PRESET):
         return answer
 
     kind, key = answer
@@ -188,14 +190,16 @@ def run_custom_command(state, lang, loaded):
     )
 
 
-def run_truck_fetch(lang):
+def run_truck_fetch(lang, state):
     """Fetch the latest run id from the cabled truck, print it, copy it.
 
-    A fetch failure is printed and swallowed — it shouldn't kill the wizard,
-    which loops back to the start menu afterwards.
+    The remembered vehicle number rides along so a configured per-truck
+    alias (see truck.setup_ssh) is used when one exists. A fetch failure is
+    printed and swallowed — it shouldn't kill the wizard, which loops back
+    to the start menu afterwards.
     """
     try:
-        info = truck.fetch_run_id()
+        info = truck.fetch_run_id((state.get("vehicle_number") or "").strip())
     except truck.TruckError as err:
         print(t(lang, "truck_error_prefix") + " " + str(err) + "\n")
         return
@@ -214,6 +218,36 @@ def run_truck_fetch(lang):
         print(t(lang, "copied_clipboard") + "\n")
     except pyperclip.PyperclipException:
         print(t(lang, "could_not_copy") + "\n")
+
+
+def run_truck_ssh_setup(lang):
+    """One-time per-truck SSH setup (see truck.py): identity + alias named
+    after the truck number, then the public key installed. The password is
+    only asked for when the existing key was rejected. Failure prints the
+    reason and the manual ssh-copy-id line; the wizard then returns to the
+    start menu.
+    """
+    answer = questionary.text(t(lang, "truck_setup_vehicle_prompt")).ask()
+    vehicle = (answer or "").strip().removeprefix("truck-") if answer else ""
+    if not vehicle:
+        print(t(lang, "cancelled") + "\n")
+        return
+
+    try:
+        res = truck.setup_ssh(vehicle)
+    except truck.TruckError as err:
+        print(t(lang, "truck_setup_error_prefix") + " " + str(err) + "\n")
+        return
+
+    if not res["key_installed"]:
+        password = questionary.password(t(lang, "truck_setup_password_prompt")).ask() or ""
+        if password:
+            installed, detail = truck.retry_install(vehicle, res["public_key"], password)
+            res["key_installed"], res["install_detail"] = installed, detail
+
+    print("")
+    truck.print_setup_result(res)
+    print("")
 
 
 def remove_preset(state, lang):
@@ -337,7 +371,10 @@ def main():
                     recorder.run_recording_flow(values["language"], state)
                     return
                 if menu is TRUCK_RUN:
-                    run_truck_fetch(values["language"])
+                    run_truck_fetch(values["language"], state)
+                    continue
+                if menu is TRUCK_SETUP:
+                    run_truck_ssh_setup(values["language"])
                     continue
                 if menu is REMOVE_PRESET:
                     remove_preset(state, values["language"])

@@ -629,6 +629,7 @@ class TestAskStartMenu:
             "Build a new command",
             "Record the screen only",
             "Fetch the latest Run ID from the truck",
+            "Set up SSH for a truck (one-time per truck)",
             "Save a custom command as a preset",
             "Quit",
         ]
@@ -650,6 +651,7 @@ class TestAskStartMenu:
             "Build a new command",
             "Record the screen only",
             "Fetch the latest Run ID from the truck",
+            "Set up SSH for a truck (one-time per truck)",
             "Save a custom command as a preset",
             "Preset: night loop",
             "Recent: t · c",
@@ -847,30 +849,39 @@ class TestTruckFetch:
 
     def test_run_truck_fetch_prints_and_copies(self, monkeypatch, capsys):
         copied = []
-        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: dict(self.INFO))
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda vehicle="": dict(self.INFO))
         monkeypatch.setattr(launch.pyperclip, "copy", copied.append)
-        launch.run_truck_fetch("en")
+        launch.run_truck_fetch("en", {})
         out = capsys.readouterr().out
         assert "run_id: 2026-09-15_14-48-57_truck-805" in out
         assert "/media/hotswap1/frontier/truck-805/" in out
         assert copied == ["2026-09-15_14-48-57_truck-805"]
         assert "(copied to clipboard)" in out
 
+    def test_run_truck_fetch_passes_remembered_vehicle(self, monkeypatch, capsys):
+        # The remembered vehicle number rides along so a configured
+        # per-truck alias is used when one exists.
+        seen = []
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda vehicle="": seen.append(vehicle) or dict(self.INFO))
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        launch.run_truck_fetch("en", {"vehicle_number": "807"})
+        assert seen == ["807"]
+
     def test_run_truck_fetch_prints_warning(self, monkeypatch, capsys):
         info = dict(self.INFO, warning="No runs found for today on the truck's clock.")
-        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: info)
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda vehicle="": info)
         monkeypatch.setattr(
             launch.pyperclip, "copy", lambda text: None
         )
-        launch.run_truck_fetch("en")
+        launch.run_truck_fetch("en", {})
         assert "⚠️" in capsys.readouterr().out
 
     def test_run_truck_fetch_error_is_printed_not_raised(self, monkeypatch, capsys):
-        def boom():
+        def boom(vehicle=""):
             raise launch.truck.TruckError("could not SSH to applied@192.168.1.11")
 
         monkeypatch.setattr(launch.truck, "fetch_run_id", boom)
-        launch.run_truck_fetch("en")  # must not raise
+        launch.run_truck_fetch("en", {})  # must not raise
         out = capsys.readouterr().out
         assert "Could not fetch the run id:" in out
         assert "could not SSH" in out
@@ -886,7 +897,7 @@ class TestTruckFetch:
             "select",
             lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
         )
-        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda: dict(self.INFO))
+        monkeypatch.setattr(launch.truck, "fetch_run_id", lambda vehicle="": dict(self.INFO))
         monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
 
         launch.main()
@@ -895,3 +906,46 @@ class TestTruckFetch:
         out = capsys.readouterr().out
         assert "run_id: 2026-09-15_14-48-57_truck-805" in out
         assert "Cancelled." in out
+
+    def test_setup_menu_entry_loops_back_to_menu(self, monkeypatch, capsys):
+        menu_returns = [launch.TRUCK_SETUP, launch.QUIT]
+        monkeypatch.setattr(launch, "ask_start_menu", lambda state, lang: menu_returns.pop(0))
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        monkeypatch.setattr(launch.questionary, "text", lambda message: type("P", (), {"ask": lambda s: "805"})())
+
+        def fake_setup(vehicle, password=""):
+            return {"vehicle": vehicle, "alias": "truck-" + vehicle, "key_created": True,
+                    "key_path": "/tmp/truck-805", "config_added": True, "key_installed": True,
+                    "install_detail": "installed", "next_step": ""}
+
+        monkeypatch.setattr(launch.truck, "setup_ssh", fake_setup)
+        launch.main()
+
+        assert menu_returns == []
+        out = capsys.readouterr().out
+        assert "truck-805: identity created" in out
+        assert "public key installed" in out
+        assert "Cancelled." in out
+
+    def test_setup_menu_entry_bad_number_does_not_crash(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            launch.questionary, "text", lambda message: type("P", (), {"ask": lambda s: "not-a-number"})()
+        )
+        monkeypatch.setattr(
+            launch.truck, "setup_ssh",
+            lambda vehicle, password="": (_ for _ in ()).throw(launch.truck.TruckError("the truck number is required and digits-only")),
+        )
+        launch.run_truck_ssh_setup("en")
+        out = capsys.readouterr().out
+        assert "Could not set up SSH:" in out
+
+    def test_setup_menu_entry_empty_number_cancels(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            launch.questionary, "text", lambda message: type("P", (), {"ask": lambda s: ""})()
+        )
+        launch.run_truck_ssh_setup("en")
+        assert "Cancelled." in capsys.readouterr().out

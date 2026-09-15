@@ -54,7 +54,7 @@ Run `./launch.sh` and answer each prompt with the arrow keys and Enter. Every sc
 Steps, in order:
 
 1. **Language** — English or 日本語. This affects every later step's wording plus the `enable_japan_driving` default (see below).
-2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); **Fetch the latest Run ID from the truck** grabs the newest run id off the cabled truck (see [Fetch the latest Run ID from the truck](#fetch-the-latest-run-id-from-the-truck)), puts it on your clipboard, and brings the menu back; **Save a custom command as a preset** stores any raw command — one you didn't build here — under a name for verbatim reuse (leading `$` prompts and the multi-line `\` form are cleaned up automatically); saved presets and recent commands join the menu once they exist, for one-step rebuilds — picking one prints the command, puts it on your clipboard, and then offers the same recording flow as a hand-built command (the only prompt it skips is save-as-preset — it's already saved); **Remove a preset** (shown once you have presets) picks one, confirms, and deletes it — then brings the menu back. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
+2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); **Fetch the latest Run ID from the truck** grabs the newest run id off the cabled truck (see [Fetch the latest Run ID from the truck](#fetch-the-latest-run-id-from-the-truck)), puts it on your clipboard, and brings the menu back; **Set up SSH for a truck (one-time per truck)** does the per-truck SSH setup — identity and alias named after the truck number (see [Per-truck SSH setup](#per-truck-ssh-setup-the-shared-ip-fix)) — then brings the menu back; **Save a custom command as a preset** stores any raw command — one you didn't build here — under a name for verbatim reuse (leading `$` prompts and the multi-line `\` form are cleaned up automatically); saved presets and recent commands join the menu once they exist, for one-step rebuilds — picking one prints the command, puts it on your clipboard, and then offers the same recording flow as a hand-built command (the only prompt it skips is save-as-preset — it's already saved); **Remove a preset** (shown once you have presets) picks one, confirms, and deletes it — then brings the menu back. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
 3. **Vehicle name** — type to search: start entering a number and the matching trucks show up as suggestions. Type just the number (e.g. `807`) and it's assembled into `truck-807`. You can also type `back` or `quit` here instead of a number to navigate.
 4. **Launch config** — a list of the 4 available configs. `sds_road_readiness` is listed first if you picked English; `etc_sds_road_readiness` is listed first if you picked 日本語.
 5. **Route** (optional) — every available route, sorted by map. A route name used by more than one map shows up as `route_name (map_name)` so the duplicates stay tellable apart.
@@ -101,24 +101,42 @@ If you just want to capture a recording without building a `start_stack` command
 
 ## Fetch the latest Run ID from the truck
 
-With the laptop cabled to a test truck, any of the three interfaces can grab the newest run id straight off the truck's log disk:
+With the laptop cabled to a test truck, any of the interfaces can grab the newest run id straight off the truck's log disk:
 
 - the standalone script — `./truck.sh [vehicle]`, or just `truck` from anywhere once the alias is set up (added automatically on first run, same as `launch`/`recorder`). It prints the run id, the full log path and the truck's hostname, and exits 1 with a readable error when the truck is unreachable.
-- the TUI wizard — **Fetch the latest Run ID from the truck** on the start menu prints the same information, puts the run id on your clipboard, and returns you to the menu.
+- the TUI wizard — **Fetch the latest Run ID from the truck** on the start menu prints the same information, puts the run id on your clipboard, and returns you to the menu. It also carries the remembered vehicle number, so a configured per-truck alias is used when one exists.
 - the web UI — the **Fetch Run ID from truck** button under the form (the vehicle in the form field is a cross-check; the fetched run id shows up with a copy button).
-- the recording flow — the Yes/No **pull-the-run-id-from-the-truck** toggle after keeping a recording (remembered between runs, like the other recording choices).
+- the recording flow — the Yes/No **pull-the-run-id-from-the-truck** toggle after keeping a recording (remembered between runs, like the other recording choices). The recording's vehicle name rides along to the fetch.
 
 The truck this works against is the one the SSH target points at (`applied@192.168.1.11` by default) — the truck identifies itself by hostname (`truck-805-primarypc`), so the fetch knows which vehicle it's connected to. The log layout is `/media/hotswap1/frontier/truck-<N>/<year>/<month>/<day>/<run_id>`, and the newest run of the truck's *today* is preferred — if there's none yet today, the newest overall is used with a visible warning.
 
 Under the hood it runs the same fixed, read-only `ls | sort | tail -1` script over your own system `ssh` (`BatchMode=yes`, so it never prompts) that the Master Checklist app's fetch button uses — your `~/.ssh` keys do the authenticating, nothing from the UI ever reaches a shell, and the whole round trip is capped at 10 seconds.
+
+### Per-truck SSH setup (the shared-IP fix)
+
+Every truck answers on the same `TRUCK_SSH_TARGET`, so a second truck's host key collides with the first's and `ssh 192.168.1.11` starts refusing. **Set up SSH for a truck** does the one-time fix per truck — the identity and `Host` alias are **forced to be named after the truck number**, which is the only input:
+
+1. `ssh-keygen -t ed25519 -f ~/.ssh/truck-805` — one identity per truck, no passphrase, 0600.
+2. An `~/.ssh/config` block for `Host truck-805` with its own `IdentityFile` and `UserKnownHostsFile` (`~/.ssh/known_hosts.d/truck-805`), so each truck's host key is stored separately. Idempotent: reruns report "already existed".
+3. Installs the public key on the truck — first with your existing key/agent, then with the truck's login password (prompted only when needed, via `SSH_ASKPASS`; the password never appears on a command line and is used only for that one call). On failure the result shows the exact `ssh-copy-id` line to run by hand.
+
+Where to run it:
+
+- `truck setup 805` — the standalone CLI (`--json` supported; prompts for the password with `getpass` only when the existing key is rejected).
+- the TUI wizard — **Set up SSH for a truck (one-time per truck)** on the start menu asks for the truck number, prints the result, and returns to the menu.
+- the web UI — the **Set up SSH for truck** button (uses the vehicle in the form field as the truck number).
+
+Afterwards, fetches for that vehicle SSH to `truck-805` instead of the raw address — so the 🚚/fetch interfaces keep working on every truck, and plain `ssh truck-805` works from any terminal.
 
 | env var | default | purpose |
 | --- | --- | --- |
 | `TRUCK_SSH_TARGET` | `applied@192.168.1.11` | SSH destination for the cabled truck |
 | `TRUCK_LOG_ROOT` | `/media/hotswap1/frontier` | root of the on-truck log tree |
 | `TRUCK_SSH_BIN` | `ssh` | SSH binary to invoke (test hook for a fake `ssh`) |
+| `TRUCK_KEYGEN_BIN` | `ssh-keygen` | ssh-keygen binary for the per-truck setup (test hook) |
+| `TRUCK_SSH_DIR` | `~/.ssh` | Directory holding identities/config/known_hosts.d (test hook) |
 
-`python3 truck.py [vehicle] [--json]` is the underlying CLI — `--json` prints machine-readable output (errors included, with exit code 1). `truck.py` is pure stdlib, so it runs without the venv.
+`python3 truck.py [vehicle] [--json]` is the underlying fetch CLI, `python3 truck.py setup <vehicle> [--json]` the setup CLI — `--json` prints machine-readable output (errors included, with exit code 1). `truck.py` is pure stdlib, so it runs without the venv.
 
 ## Where the options come from
 

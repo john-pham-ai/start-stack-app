@@ -96,6 +96,7 @@ PAGE = """
   <button type="submit" name="action" value="save_custom_preset">{{ t(lang, 'save_custom_preset') }}</button>
   <label>{{ t(lang, 'truck_fetch_btn') }}</label>
   <button type="submit" name="action" value="truck_run">{{ t(lang, 'truck_fetch_btn') }}</button>
+  <button type="submit" name="action" value="truck_ssh_setup">{{ t(lang, 'truck_setup_btn') }}</button>
 </form>
 {% if truck_result %}
   <div class="command-block">
@@ -110,6 +111,27 @@ PAGE = """
   <div class="command-block">
     <h3>{{ t(lang, 'truck_run_heading') }}</h3>
     <p>{{ truck_error }}</p>
+  </div>
+{% endif %}
+{% if truck_setup %}
+  <div class="command-block">
+    <h3>{{ t(lang, 'truck_setup_heading') }}</h3>
+    <p>{{ truck_setup.alias }}: identity {{ 'created' if truck_setup.key_created else 'already existed' }} ({{ truck_setup.key_path }}),
+       config block {{ 'added' if truck_setup.config_added else 'already existed' }}.</p>
+    {% if truck_setup.key_installed %}
+      <p>✅ {{ t(lang, 'truck_setup_installed') }} — {{ truck_setup.install_detail }}.</p>
+    {% else %}
+      <p>⚠️ {{ truck_setup.install_detail }}</p>
+      <pre>{{ truck_setup.next_step }}</pre>
+      <button type="button" class="copy-btn">{{ t(lang, 'copy_to_clipboard') }}</button>
+      <span class="copy-status"></span>
+    {% endif %}
+  </div>
+{% endif %}
+{% if truck_setup_error %}
+  <div class="command-block">
+    <h3>{{ t(lang, 'truck_setup_heading') }}</h3>
+    <p>{{ truck_setup_error }}</p>
   </div>
 {% endif %}
 {% if command %}
@@ -229,6 +251,8 @@ def index():
     command = None
     truck_result = None
     truck_error = None
+    truck_setup = None
+    truck_setup_error = None
     if request.method == "POST":
         action = request.form.get("action")
         if action == "truck_run":
@@ -240,6 +264,20 @@ def index():
                 truck_result = truck.fetch_run_id(number)
             except truck.TruckError as err:
                 truck_error = t(lang, "truck_error_prefix") + " " + str(err)
+        elif action == "truck_ssh_setup":
+            # The identity and alias are forced to the truck number from the
+            # form's vehicle field.
+            vehicle = normalize_vehicle_name(request.form.get("vehicle_name", ""))
+            number = vehicle[len("truck-"):] if vehicle.startswith("truck-") and vehicle[len("truck-"):].isdigit() else ""
+            try:
+                if not number:
+                    raise truck.TruckError(
+                        "Enter the truck number in the vehicle field first — the SSH "
+                        "identity and alias are named after it."
+                    )
+                truck_setup = truck.setup_ssh(number)
+            except truck.TruckError as err:
+                truck_setup_error = t(lang, "truck_error_prefix") + " " + str(err)
         elif action == "remove_preset":
             # The preset form carries no command fields, so it just deletes
             # (and re-renders) rather than building anything.
@@ -293,6 +331,8 @@ def index():
         command=command,
         truck_result=truck_result,
         truck_error=truck_error,
+        truck_setup=truck_setup,
+        truck_setup_error=truck_setup_error,
         lang=lang,
         t=t,
         presets=state.get("presets", {}),

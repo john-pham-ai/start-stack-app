@@ -23,15 +23,28 @@ Environment overrides (same names and defaults as the Master Checklist app):
 - ``TRUCK_SSH_TARGET``   (default ``applied@192.168.1.11``)
 - ``TRUCK_LOG_ROOT``    (default ``/media/hotswap1/frontier``)
 - ``TRUCK_SSH_BIN``     (default ``ssh``; test hook for a fake ssh)
+- ``TRUCK_KEYGEN_BIN``  (default ``ssh-keygen``; test hook)
+- ``TRUCK_SSH_DIR``     (default ``~/.ssh``; test hook)
+
+``truck.py setup <vehicle>`` does the one-time per-truck SSH setup: since
+every truck answers on the same address, each gets its own identity and
+``Host truck-<N>`` alias — the name is forced to the truck number — with a
+separate known-hosts file so a second truck's host key can't collide with
+the first's. The public key is then installed on the truck (existing
+key/agent first, then an optional password via SSH_ASKPASS, prompted with
+getpass when needed). Afterwards fetches for that vehicle SSH to the alias.
 """
 
+import getpass
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 SSH_TIMEOUT = 10  # whole round trip, so a hung connection can't pin the CLI
+SETUP_TIMEOUT = 20  # key-install round trip
 
 
 class TruckError(Exception):
@@ -135,6 +148,8 @@ def fetch_run_id(vehicle="", *, ssh_bin=None, target=None, log_root=None, timeou
     """SSH to the truck, run the fixed script, return the parsed info dict.
 
     ``vehicle`` is optional and digits-only (a cross-check, never executed).
+    When a per-truck alias exists for it (see setup_ssh), the fetch SSHes to
+    the alias so that truck's own identity and known-hosts file apply.
     Raises TruckError with a message the user can act on.
     """
     vehicle = (vehicle or "").strip()
@@ -142,7 +157,7 @@ def fetch_run_id(vehicle="", *, ssh_bin=None, target=None, log_root=None, timeou
         raise TruckError(f"invalid vehicle number {vehicle!r} (digits only)")
 
     ssh = ssh_bin or _env_or("TRUCK_SSH_BIN", "ssh")
-    dest = target or _env_or("TRUCK_SSH_TARGET", "applied@192.168.1.11")
+    dest = resolve_target(vehicle) if target is None else target
     script = remote_script(log_root or _env_or("TRUCK_LOG_ROOT", "/media/hotswap1/frontier"))
     command = [
         ssh,
@@ -165,18 +180,276 @@ def fetch_run_id(vehicle="", *, ssh_bin=None, target=None, log_root=None, timeou
         detail = proc.stderr.strip()
         detail = detail if len(detail) <= 200 else detail[:200] + "…"
         if proc.returncode == 255:  # ssh's own failures: unreachable, key rejected
+            hint = ""
+            if vehicle and not has_alias(vehicle):
+                hint = " If this truck shares its IP with others, run `truck setup " + vehicle + "` first."
             raise TruckError(
                 f"could not SSH to {dest} — host unreachable or the key was rejected. "
-                f"Test it yourself with `ssh {dest}` ({detail})"
+                f"Test it yourself with `ssh {dest}` ({detail}).{hint}"
             )
         raise TruckError(f"ssh failed with exit code {proc.returncode} ({detail})")
     return parse_output(proc.stdout, vehicle)
 
 
+# ---- Per-truck SSH setup (the shared-IP fix) -------------------------------
+
+
+def ssh_dir():
+    """~/.ssh, or TRUCK_SSH_DIR when overridden (tests point it elsewhere)."""
+    override = os.environ.get("TRUCK_SSH_DIR")
+    if override:
+        return override
+    return os.path.join(os.path.expanduser("~"), ".ssh")
+
+
+def alias_for(vehicle):
+    return "truck-" + vehicle
+
+
+def _host_block_re(alias):
+    return re.compile(r"(?m)^\s*Host\s+" + re.escape(alias) + r"\s*$")
+
+
+def has_alias(vehicle):
+    """True when ~/.ssh/config defines the Host alias for this vehicle."""
+    if not (vehicle or "").isdigit():
+        return False
+    try:
+        with open(os.path.join(ssh_dir(), "config")) as f:
+            return bool(_host_block_re(alias_for(vehicle)).search(f.read()))
+    except OSError:
+        return False
+
+
+def resolve_target(vehicle, target=None):
+    """The per-truck alias when one is configured for this vehicle, else the
+    raw TRUCK_SSH_TARGET (or the explicit target)."""
+    dest = target or _env_or("TRUCK_SSH_TARGET", "applied@192.168.1.11")
+    if vehicle and has_alias(vehicle):
+        return alias_for(vehicle)
+    return dest
+
+
+def _split_target(target):
+    """'applied@192.168.1.11' -> ('applied', '192.168.1.11')."""
+    if "@" in target:
+        user, _, host = target.rpartition("@")
+        return user, host
+    return "", target
+
+
+def config_block(vehicle):
+    """The managed ~/.ssh/config block for a vehicle, named after its number."""
+    alias = alias_for(vehicle)
+    user, host = _split_target(_env_or("TRUCK_SSH_TARGET", "applied@192.168.1.11"))
+    d = ssh_dir()
+    lines = [
+        f"# {alias} — added by start-stack-app truck SSH setup",
+        f"Host {alias}",
+        f"    HostName {host}",
+    ]
+    if user:
+        lines.append(f"    User {user}")
+    lines += [
+        f"    IdentityFile {os.path.join(d, alias)}",
+        "    IdentitiesOnly yes",
+        f"    UserKnownHostsFile {os.path.join(d, 'known_hosts.d', alias)}",
+        "    StrictHostKeyChecking accept-new",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _authorized_keys_script():
+    """Appends the stdin key to authorized_keys unless already present."""
+    return (
+        "umask 077; mkdir -p ~/.ssh; key=$(cat); "
+        'grep -qxF -- "$key" ~/.ssh/authorized_keys 2>/dev/null '
+        '|| printf \'%s\\n\' "$key" >> ~/.ssh/authorized_keys'
+    )
+
+
+def _install_key(vehicle, public_key, password="", timeout=SETUP_TIMEOUT):
+    """Push the public key to the truck. Returns (installed, detail).
+
+    Connects to the raw address (the alias's own key isn't authorized yet)
+    but records the host key under the alias's known-hosts file. Attempt 1:
+    existing key/agent (BatchMode). Attempt 2: the password via SSH_ASKPASS
+    in a detached session — the password travels in the environment of the
+    ssh process, never on a command line.
+    """
+    ssh = _env_or("TRUCK_SSH_BIN", "ssh")
+    target = _env_or("TRUCK_SSH_TARGET", "applied@192.168.1.11")
+    known_hosts = os.path.join(ssh_dir(), "known_hosts.d", alias_for(vehicle))
+    common = [
+        "-o", "ConnectTimeout=5",
+        "-o", "IdentitiesOnly=no",
+        "-o", f"UserKnownHostsFile={known_hosts}",
+        "-o", "StrictHostKeyChecking=accept-new",
+    ]
+
+    def run(extra, env=None, detach=False):
+        args = [ssh, *common, *extra, target, _authorized_keys_script()]
+        kwargs = {}
+        if detach:
+            kwargs["start_new_session"] = True  # no tty for SSH_ASKPASS
+        try:
+            proc = subprocess.run(
+                args, input=public_key + "\n", capture_output=True, text=True,
+                timeout=timeout, env={**os.environ, **(env or {})}, **kwargs,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "timed out reaching the truck"
+        except FileNotFoundError:
+            return False, f"no {ssh!r} binary found — is SSH installed?"
+        if proc.returncode == 0:
+            return True, ""
+        detail = proc.stderr.strip()
+        detail = detail if len(detail) <= 200 else detail[:200] + "…"
+        return False, detail
+
+    installed, detail = run(["-o", "BatchMode=yes"])
+    if installed:
+        return True, "installed using your existing SSH key/agent"
+    if not password:
+        return False, "your existing key was not accepted and no password was given (" + detail + ")"
+
+    # Attempt 2: the one-time password, through an askpass helper.
+    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as f:
+        f.write("#!/bin/sh\nprintf '%s' \"$TRUCK_SSH_PASSWORD\"\n")
+        askpass = f.name
+    try:
+        os.chmod(askpass, 0o700)
+        env = {
+            "SSH_ASKPASS": askpass,
+            "SSH_ASKPASS_REQUIRE": "force",
+            "DISPLAY": ":0",  # older OpenSSH only consults SSH_ASKPASS with DISPLAY set
+            "TRUCK_SSH_PASSWORD": password,
+        }
+        installed, detail = run(
+            ["-o", "NumberOfPasswordPrompts=1", "-o", "PreferredAuthentications=password,keyboard-interactive"],
+            env=env, detach=True,
+        )
+    finally:
+        os.remove(askpass)
+    if installed:
+        return True, "installed using the password you entered"
+    return False, "the password was not accepted (" + detail + ")"
+
+
+def setup_ssh(vehicle, password=""):
+    """One-time per-truck SSH setup; the name is forced to the truck number.
+
+    Returns a dict: vehicle, alias, key_path, public_key, key_created,
+    config_added, key_installed, install_detail, next_step. Only the key
+    install can fail without stopping the rest: the identity and config are
+    still written, and next_step carries the ssh-copy-id line to run by hand.
+    """
+    vehicle = (vehicle or "").strip()
+    if not vehicle.isdigit():
+        raise TruckError(
+            f"the truck number is required and digits-only (got {vehicle!r}) — "
+            "the SSH identity and alias are named after it"
+        )
+    alias = alias_for(vehicle)
+    d = ssh_dir()
+    res = {
+        "vehicle": vehicle, "alias": alias,
+        "key_path": os.path.join(d, alias),
+        "next_step": "",
+    }
+
+    os.makedirs(os.path.join(d, "known_hosts.d"), mode=0o700, exist_ok=True)
+
+    # 1. Identity: one ed25519 key per truck, no passphrase.
+    if not os.path.exists(res["key_path"]):
+        keygen = _env_or("TRUCK_KEYGEN_BIN", "ssh-keygen")
+        try:
+            subprocess.run(
+                [keygen, "-q", "-t", "ed25519", "-N", "", "-C", alias, "-f", res["key_path"]],
+                capture_output=True, text=True, timeout=15, check=True,
+            )
+        except FileNotFoundError:
+            raise TruckError(f"no {keygen!r} binary found — is OpenSSH installed?") from None
+        except subprocess.TimeoutExpired:
+            raise TruckError("ssh-keygen timed out") from None
+        except subprocess.CalledProcessError as err:
+            raise TruckError(f"ssh-keygen failed: {(err.stderr or '').strip()}") from None
+        res["key_created"] = True
+    else:
+        res["key_created"] = False
+
+    with open(res["key_path"] + ".pub") as f:
+        res["public_key"] = f.read().strip()
+
+    # 2. Config block, appended once.
+    res["config_added"] = not has_alias(vehicle)
+    if res["config_added"]:
+        config_path = os.path.join(d, "config")
+        existing = ""
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                existing = f.read()
+        with open(config_path, "a") as f:
+            if existing and not existing.endswith("\n"):
+                f.write("\n")
+            f.write("\n" + config_block(vehicle))
+
+    # 3. Install the public key on the truck.
+    res["key_installed"], res["install_detail"] = _install_key(vehicle, res["public_key"], password)
+    if not res["key_installed"]:
+        user, host = _split_target(_env_or("TRUCK_SSH_TARGET", "applied@192.168.1.11"))
+        dest = f"{user}@{host}" if user else host
+        res["next_step"] = (
+            f"ssh-copy-id -i {res['key_path']}.pub "
+            f"-o UserKnownHostsFile={os.path.join(d, 'known_hosts.d', alias)} {dest}"
+        )
+    return res
+
+
+def retry_install(vehicle, public_key, password):
+    """Retry just the key install with a password (the wizard/CLI ask for it
+    only after the existing key was rejected). Returns (installed, detail)."""
+    return _install_key(vehicle, public_key, password)
+
+
 def main(argv):
-    """CLI: truck.py [vehicle] [--json]. Exit 0 on success, 1 on failure."""
-    args = [a for a in argv if a != "--json"]
+    """CLI: truck.py [vehicle] [--json], or truck.py setup <vehicle> [--json].
+
+    Exit 0 on success, 1 on failure."""
     as_json = "--json" in argv
+    args = [a for a in argv if a != "--json"]
+
+    if args and args[0] == "setup":
+        if len(args) != 2:
+            print(f"usage: {os.path.basename(sys.argv[0])} setup <vehicle> [--json]", file=sys.stderr)
+            return 1
+        try:
+            res = setup_ssh(args[1])
+        except TruckError as err:
+            if as_json:
+                print(json.dumps({"error": str(err)}))
+            else:
+                print(f"error: {err}", file=sys.stderr)
+            return 1
+        # The install is the only step that can need a password; ask once,
+        # off any command line (getpass), and retry just that step.
+        if not res["key_installed"] and not as_json:
+            password = getpass.getpass(
+                "Your existing SSH key was not accepted. Truck login password "
+                "(Enter to skip and do it by hand): "
+            )
+            if password:
+                res["key_installed"], res["install_detail"] = _install_key(
+                    args[1], res["public_key"], password
+                )
+        if as_json:
+            if not res["key_installed"]:
+                res["next_step"] = res.get("next_step") or ""
+            print(json.dumps(res))
+            return 0 if res["key_installed"] else 1
+        print_setup_result(res)
+        return 0 if res["key_installed"] else 1
+
     if len(args) > 1:
         print(f"usage: {os.path.basename(sys.argv[0])} [vehicle] [--json]", file=sys.stderr)
         return 1
@@ -202,6 +475,21 @@ def main(argv):
     if info.get("warning"):
         print(f"⚠️  {info['warning']}")
     return 0
+
+
+def print_setup_result(res):
+    """Human-readable summary of a setup result (shared with the wizard)."""
+    key_state = "created" if res["key_created"] else "already existed"
+    cfg_state = "added" if res["config_added"] else "already existed"
+    print(f"{res['alias']}: identity {key_state} ({res['key_path']}), config block {cfg_state}.")
+    if res["key_installed"]:
+        print(f"✅ public key installed — {res['install_detail']}.")
+        print(f"Next: `ssh {res['alias']}` and the run-id fetch for {res['vehicle']} now work with no password.")
+    else:
+        print(f"⚠️  public key not installed — {res['install_detail']}")
+        if res.get("next_step"):
+            print("Run it by hand, then fetch again:")
+            print("  " + res["next_step"])
 
 
 if __name__ == "__main__":

@@ -588,7 +588,7 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
             print(t(lang, "recording_discarded") + "\n")
             return None
 
-    run_id, test_case_id, _skipped = ask_run_id_and_test_case(lang, state)
+    run_id, test_case_id, _skipped = ask_run_id_and_test_case(lang, state, vehicle_name)
     video_path, sidecar_path = recording.finalize(
         vehicle_name=vehicle_name, run_id=run_id, test_case_id=test_case_id, metadata=metadata
     )
@@ -603,15 +603,20 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
     return video_path, sidecar_path
 
 
-def fetch_truck_run_id(lang):
+def fetch_truck_run_id(lang, vehicle_name=""):
     """Fetch the latest run id from the cabled truck (truck.py).
 
-    Prints what was fetched so the tester can sanity-check it before
-    accepting; on failure prints the readable error instead. Returns the
-    run id, or "" so the prompt comes back empty for a manual paste.
+    vehicle_name rides along so a configured per-truck alias (set up via
+    `truck setup`) is used when one exists. Prints what was fetched so the
+    tester can sanity-check it before accepting; on failure prints the
+    readable error instead. Returns the run id, or "" so the prompt comes
+    back empty for a manual paste.
     """
+    number = (vehicle_name or "").strip()
+    if number.startswith("truck-"):
+        number = number[len("truck-"):]
     try:
-        info = truck.fetch_run_id()
+        info = truck.fetch_run_id(number)
     except truck.TruckError as err:
         print(t(lang, "truck_error_prefix") + " " + str(err) + "\n")
         return ""
@@ -627,18 +632,20 @@ def fetch_truck_run_id(lang):
     return info["run_id"]
 
 
-def ask_run_id_and_test_case(lang, state):
+def ask_run_id_and_test_case(lang, state, vehicle_name=""):
     """Ask the pull-or-paste toggle, the run id, then the test case id.
 
-    First a Yes/No toggle: pull the latest run id off the cabled truck?
-    The answer is remembered in state and pre-selected next time. Yes
-    fetches and prints it (vehicle, hostname, run id, full log path, any
-    warning), then goes straight to the test case prompt; a failed fetch
-    falls back to the paste prompt. No gives the paste prompt directly
-    (optional — leave it blank to skip). 'back' at the test case prompt
-    re-asks the run id as a paste with the current value as the default —
-    the toggle isn't asked again within the same flow. The skip choice for
-    the test case is remembered too, as is the last test case id used.
+    vehicle_name (e.g. "truck-805") is passed to the fetch so a configured
+    per-truck SSH alias is used when one exists. First a Yes/No toggle:
+    pull the latest run id off the cabled truck? The answer is remembered
+    in state and pre-selected next time. Yes fetches and prints it
+    (vehicle, hostname, run id, full log path, any warning), then goes
+    straight to the test case prompt; a failed fetch falls back to the
+    paste prompt. No gives the paste prompt directly (optional — leave it
+    blank to skip). 'back' at the test case prompt re-asks the run id as a
+    paste with the current value as the default — the toggle isn't asked
+    again within the same flow. The skip choice for the test case is
+    remembered too, as is the last test case id used.
 
     Returns (run_id, test_case_id, skipped_polarion).
     """
@@ -657,7 +664,7 @@ def ask_run_id_and_test_case(lang, state):
             recording_state["pull_truck_run_id"] = bool(pull)
             toggle_done = True
             if pull:
-                fetched = fetch_truck_run_id(lang)  # "" if it failed
+                fetched = fetch_truck_run_id(lang, vehicle_name)  # "" if it failed
                 run_id = fetched
 
         if not fetched:

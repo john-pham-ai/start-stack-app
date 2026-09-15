@@ -205,7 +205,7 @@ class TestAskRunIdAndTestCase:
         confirm = FakeConfirm([True])
         monkeypatch.setattr(recorder.questionary, "text", fake)
         monkeypatch.setattr(recorder.questionary, "confirm", confirm)
-        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda vehicle="": dict(self.TRUCK_INFO))
         state = {}
         result = ask_run_id_and_test_case("en", state)
         out = capsys.readouterr().out
@@ -224,14 +224,14 @@ class TestAskRunIdAndTestCase:
         monkeypatch.setattr(recorder.questionary, "text", fake)
         monkeypatch.setattr(recorder.questionary, "confirm", FakeConfirm([True]))
         monkeypatch.setattr(
-            recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO, warning="No runs today.")
+            recorder.truck, "fetch_run_id", lambda vehicle="": dict(self.TRUCK_INFO, warning="No runs today.")
         )
         result = ask_run_id_and_test_case("en", {})
         assert "⚠️  No runs today." in capsys.readouterr().out  # shown, not hidden
         assert result == ("2026-09-15_14-48-57_truck-805", "", True)
 
     def test_toggle_failure_falls_back_to_manual_paste(self, monkeypatch, capsys):
-        def boom():
+        def boom(vehicle=""):
             raise recorder.truck.TruckError("could not SSH to applied@192.168.1.11")
 
         fake = FakeText(["manual-42", "TC-2"])
@@ -274,7 +274,7 @@ class TestAskRunIdAndTestCase:
         confirm = FakeConfirm([True])
         monkeypatch.setattr(recorder.questionary, "text", fake)
         monkeypatch.setattr(recorder.questionary, "confirm", confirm)
-        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda: dict(self.TRUCK_INFO))
+        monkeypatch.setattr(recorder.truck, "fetch_run_id", lambda vehicle="": dict(self.TRUCK_INFO))
         result = ask_run_id_and_test_case("en", {})
         assert len(confirm.messages) == 1  # toggle asked exactly once
         # Prompt order: test case, then (after 'back') the paste — whose
@@ -341,7 +341,7 @@ class TestRunRecordingFlow:
         monkeypatch.setattr(
             recorder,
             "ask_run_id_and_test_case",
-            lambda lang, state: (events.append("name"), ("run-1", "TC-1", False))[1],
+            lambda lang, state, vehicle_name="": (events.append("name"), ("run-1", "TC-1", False))[1],
         )
         monkeypatch.setattr(recorder, "save_state", lambda state: events.append("save"))
 
@@ -753,3 +753,27 @@ class TestEnsureRecordingDeps:
         monkeypatch.setattr(recorder, "_try_install", lambda pkg: pytest.fail("should not install"))
         ok, _hint = recorder.ensure_recording_deps()
         assert ok is True
+
+
+class TestVehicleRidesAlong:
+    """The recording flow's vehicle name reaches the fetch, so a configured
+    per-truck SSH alias is used when one exists."""
+
+    def test_vehicle_name_passed_to_fetch(self, monkeypatch):
+        seen = []
+
+        monkeypatch.setattr(
+            recorder.questionary, "confirm",
+            lambda message, default=False: type("P", (), {"ask": lambda s: True})(),
+        )
+        monkeypatch.setattr(
+            recorder.questionary, "text",
+            lambda message, default="": type("P", (), {"ask": lambda s: "skip"})(),
+        )
+        monkeypatch.setattr(
+            recorder, "fetch_truck_run_id",
+            lambda lang, vehicle_name="": seen.append(vehicle_name) or "run-x",
+        )
+        run_id, _tc, _skipped = ask_run_id_and_test_case("en", {}, "truck-805")
+        assert seen == ["truck-805"]
+        assert run_id == "run-x"

@@ -353,3 +353,52 @@ class TestTruckFetch:
         client.post("/", data={"lang": "en", "vehicle_name": "805", "action": "truck_run"})
         # A fetch builds no command, so nothing lands in the history.
         assert not isolated_state.exists()
+
+
+class TestTruckSSHSetup:
+    SETUP = {
+        "vehicle": "805", "alias": "truck-805", "key_path": "/home/x/.ssh/truck-805",
+        "public_key": "ssh-ed25519 AAAA truck-805", "key_created": True,
+        "config_added": True, "key_installed": True,
+        "install_detail": "installed using your existing SSH key/agent", "next_step": "",
+    }
+
+    def test_button_rendered(self, client):
+        page = client.get("/").get_data(as_text=True)
+        assert 'value="truck_ssh_setup"' in page
+        assert "Set up SSH for truck" in page
+
+    def test_setup_renders_result(self, client, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module.truck, "setup_ssh", lambda v: dict(self.SETUP))
+        page = client.post(
+            "/",
+            data={"lang": "en", "vehicle_name": "805", "action": "truck_ssh_setup"},
+        ).get_data(as_text=True)
+        assert "Truck SSH setup" in page
+        assert "identity created" in page
+        assert "✅ public key installed" in page
+
+    def test_setup_install_failure_shows_next_step(self, client, monkeypatch):
+        import app as app_module
+
+        setup = dict(self.SETUP, key_installed=False, install_detail="key rejected",
+                     next_step="ssh-copy-id -i ~/.ssh/truck-805.pub applied@192.168.1.11")
+        monkeypatch.setattr(app_module.truck, "setup_ssh", lambda v: setup)
+        page = client.post(
+            "/",
+            data={"lang": "en", "vehicle_name": "805", "action": "truck_ssh_setup"},
+        ).get_data(as_text=True)
+        assert "⚠️ key rejected" in page
+        assert "ssh-copy-id -i ~/.ssh/truck-805.pub" in page
+
+    def test_setup_without_vehicle_renders_the_rule(self, client, monkeypatch):
+        import app as app_module
+
+        monkeypatch.setattr(app_module.truck, "setup_ssh", lambda v: dict(self.SETUP))
+        page = client.post(
+            "/",
+            data={"lang": "en", "vehicle_name": "", "action": "truck_ssh_setup"},
+        ).get_data(as_text=True)
+        assert "named after it" in page
