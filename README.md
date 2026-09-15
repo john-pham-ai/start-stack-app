@@ -15,12 +15,11 @@ Both build a command in this shape — one flag per line, with a trailing `\` so
 start_stack \
   --vehicle_name truck-807 \
   --launch_config sds_road_readiness \
-  --map_key shirosato_zone_54 \
   --route shoreline_terminal_10kph \
   --enable_japan_driving
 ```
 
-`map_key`, `route`, and `enable_japan_driving` are optional (they're left out of the command entirely if unset); `vehicle_name` and `launch_config` are always required.
+`route` and `enable_japan_driving` are optional (they're left out of the command entirely if unset); `vehicle_name` and `launch_config` are always required. There's no `--map_key` flag and no map picker — routes carry their map, so `--route` alone is enough (a route name used by more than one map is emitted as `map_name:route_name`). In the UIs, the route list is grouped by map instead, so you still see which map each route belongs to.
 
 ## Setup
 
@@ -42,9 +41,11 @@ The first time you run `./launch.sh`, it also adds a `launch` alias to your shel
 
 Pick values from the dropdowns and click **Build command** to see the resulting `start_stack` command, with a button to copy it to your clipboard.
 
-- The **route** dropdown filters automatically based on which **map_key** you picked — a route only shows up if it's tied to that specific map key (see [Editing the options](#editing-the-options) below). Pick a different map key and the route list updates; pick no map key and every route shows.
-- The **日本語 / English** link in the top right switches the page's language. Switching languages resets the form to its defaults (it doesn't carry over your other picks).
-- Selecting **English** narrows the map_key dropdown to `crows_landing`, `sunnyvale_office`, `usa_zone_10`, `walnut_creek`, and `shoreline_zone_10`. Selecting **日本語** shows the remaining map keys (`jp_tokyo`, `jp_zone_53`, `jp_zone_54`, `shirosato_zone_54`, `shirosato_reversed_zone_54`) and also pre-checks `enable_japan_driving` (you can still uncheck it).
+- The **vehicle name** is a text box with suggestions — start typing (either `807` or `truck-807` works) or click it to pick from the list. A bare number is assembled into `truck-<number>` for you.
+- The **route** dropdown lists every route, grouped by the map it belongs to (routes carry their map — see [Where the options come from](#where-the-options-come-from) below — so there's no separate map picker).
+- The **日本語 / English** link in the top right switches the page's language. Switching languages resets the form to its defaults (it doesn't carry over your other picks), and selecting **日本語** pre-checks `enable_japan_driving` (you can still uncheck it).
+- If you've saved any **presets**, a dropdown above the form loads one into the form in place — no page reload. Type a name in the **Preset name** box and click **Save as preset** to save the currently picked values.
+- **Recent commands** lists the last commands you built (from either the web UI or the TUI — they share one history), each with its own copy button, so re-copying an earlier command never means re-walking the form.
 
 ## TUI
 
@@ -52,22 +53,31 @@ Run `./launch.sh` and answer each prompt with the arrow keys and Enter. Every sc
 
 Steps, in order:
 
-1. **Language** — English or 日本語. This affects every later step's wording, plus the map_key list and the `enable_japan_driving` default (see below).
-2. **Vehicle name** — a text prompt, not a dropdown. Type just the number (e.g. `807`) and it's assembled into `truck-807`. You can also type `back` or `quit` here instead of a number to navigate.
-3. **Launch config** — a list of the 4 available configs. `sds_road_readiness` is listed first if you picked English; `etc_sds_road_readiness` is listed first if you picked 日本語.
-4. **Map key** (optional) — narrowed to the same English/Japanese subset as the web UI. For English, `sunnyvale_office` and `usa_zone_10` are listed first; for 日本語, `jp_zone_53` and `jp_zone_54` are listed first.
-5. **Route** (optional) — narrowed to whichever routes are tied to the map key you just picked (or all routes, if you picked none).
+1. **Language** — English or 日本語. This affects every later step's wording plus the `enable_japan_driving` default (see below).
+2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); saved presets and recent commands join the menu once they exist, for one-step rebuilds. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
+3. **Vehicle name** — type to search: start entering a number and the matching trucks show up as suggestions. Type just the number (e.g. `807`) and it's assembled into `truck-807`. You can also type `back` or `quit` here instead of a number to navigate.
+4. **Launch config** — a list of the 4 available configs. `sds_road_readiness` is listed first if you picked English; `etc_sds_road_readiness` is listed first if you picked 日本語.
+5. **Route** (optional) — every available route, sorted by map. A route name used by more than one map shows up as `route_name (map_name)` so the duplicates stay tellable apart.
 6. **Enable Japan driving mode?** — Yes/No. Defaults to **No** if you picked English, **Yes** if you picked 日本語 — either way, you can still pick the other answer.
 
-At the end, the command prints to the terminal and is copied to your clipboard automatically (if your system clipboard is accessible).
+At the end, the command prints to the terminal and is copied to your clipboard automatically (if your system clipboard is accessible). For hand-built commands you're then asked whether to **save the choices as a preset** — give it a name and you can rebuild it in one step next time.
 
 ### It remembers your last answers
 
-Your vehicle number, launch config, and map key choices are saved to a local `.launch_state.json` file (not tracked in git) and pre-filled as the default the next time you run `./launch.sh` — so you can usually just press Enter through the prompts you don't want to change. Launch config and map key are remembered **separately per language** (an English run and a Japanese run each keep their own last pick). This only happens after you complete a full run; quitting partway through doesn't save anything.
+Your vehicle number and launch config are saved to a local `.launch_state.json` file (not tracked in git) and pre-filled as the default the next time you run `./launch.sh` — so you can usually just press Enter through the prompts you don't want to change. Launch config is remembered **separately per language** (an English run and a Japanese run each keep their own last pick). The same file also holds your **presets** and the last 20 **built commands**, which is how the presets/recent-commands shortcuts (and the web UI's preset and history sections) persist. This only happens after you complete a full run; quitting partway through doesn't save anything.
 
 ## Recording the screen
 
-After the command is built and copied, you're asked whether to record the screen for this run. This needs `ffmpeg`; if it's not already installed, the wizard installs it for you automatically (via Homebrew on macOS, or apt/dnf/pacman on Linux — whichever it finds first). If none of those are available, or the install fails, recording is skipped and you're told to install `ffmpeg` yourself.
+After the command is built and copied, you're asked whether to record the screen for this run. What happens under the hood depends on the machine — the right capture tool is picked automatically:
+
+| machine | capture tool |
+| --- | --- |
+| macOS | ffmpeg's `avfoundation` |
+| Linux, X11 | ffmpeg's `x11grab` |
+| Linux, Wayland (KDE/GNOME) | `gpu-screen-recorder` |
+| Linux, Wayland (Sway/Hyprland and other wlroots compositors) | `wf-recorder` |
+
+Whatever's missing gets installed automatically when a supported package manager is around (Homebrew on macOS; apt/dnf/pacman on Linux — so both Debian and Arch work out of the box). If the auto-install fails (e.g. `gpu-screen-recorder` isn't packaged for your distro), recording is skipped and you're told exactly what to install and how. On Linux Wayland the first recording per machine may pop a screen-share approval dialog — approve it and the recording starts.
 
 The whole thing is driven by single keypresses — no Enter needed except at the text prompts:
 
@@ -87,24 +97,39 @@ The Polarion link is built from a URL template in `recorder.py` (`POLARION_URL_T
 
 ### Recording without the command wizard
 
-If you just want to capture a recording without building a `start_stack` command first, run `./recorder.sh` (or type `recorder` once the alias is set up). It goes straight to the same `r` to start / `s` to stop / keep-or-discard / naming flow described above — the video just won't have a vehicle name in its filename. It shares the same remembered `skip`/last-test-case-id state as the full wizard.
+If you just want to capture a recording without building a `start_stack` command first, pick **Record the screen only** on the wizard's first menu — or run `./recorder.sh` (or type `recorder` once the alias is set up). Both go straight to the same `r` to start / `s` to stop / keep-or-discard / naming flow described above, in your chosen language for the wizard route — the video just won't have a vehicle name in its filename. They share the same remembered `skip`/last-test-case-id state as the full wizard.
+
+## Where the options come from
+
+- **Vehicles and launch configs** always come from `options.csv` (see [Editing the options](#editing-the-options) below).
+- **Routes** are scanned live from a brain2 checkout when one is available: every `onroad/config/constants/behavior/routes/**/*.txtpb` file (recursively, so route files for every map are picked up however they're organized) is read for its `identifier { map_name, route_name }` pairs, so the list can never go stale against brain2. Each route carries its map for grouping in the UI. Point the tool at your checkout with the `BRAIN2_REPO_PATH` env var (defaults to trying `~/brain2` and `~/Projects/brain2`).
+- When no checkout is found, the tool **falls back to the `route` rows in `options.csv`** instead of failing — that's the CSV's fallback role.
+- Either way, the CSV's route rows still contribute their `nickname` column to any live-scanned route they match, so curated labels ("Shoreline Terminal - Slow") survive the merge.
 
 ## Editing the options
 
-All the dropdown/prompt values live in `options.csv` — a single table with one row per option, and these columns:
+All the vehicle/config dropdown values live in `options.csv` — a single table with one row per option, and these columns:
 
 | column | meaning |
 | --- | --- |
-| `field` | which list this row belongs to: `vehicle_name`, `launch_config`, `map_key`, or `route` |
-| `value` | the actual value passed to `start_stack` (or, for `map_key`, the value routes tie themselves to) |
+| `field` | which list this row belongs to: `vehicle_name`, `launch_config`, or `route` (route rows act as the brain2 fallback plus nickname overrides — see above) |
+| `value` | the actual value passed to `start_stack` |
 | `nickname` | optional friendly display name; leave blank to just show `value` as-is |
-| `owner_map_key` | **routes only** — which `map_key` this route belongs to. A route only ever shows up once that exact map_key is selected; leave blank and the route never shows up for any specific map_key |
-| `language` | **map keys only** — `en`, `ja`, or blank. Blank means the map_key shows up regardless of language |
+| `owner_map_key` | **routes only** — which map this route belongs to, used to group the route list in the UI |
 
-To add a new option, just add a row. For example, a new route tied to `usa_zone_10`:
+To add a new vehicle or config, just add a row. For example:
 
 ```
-route,my_new_route,My Friendly Name,usa_zone_10,
+vehicle_name,truck-831,
 ```
 
-No code changes needed — both the web UI and the TUI read this file fresh on every run.
+No code changes needed — both the web UI and the TUI read this file fresh on every run. Routes, though, don't need a CSV edit at all — they come from brain2 (see [Where the options come from](#where-the-options-come-from)).
+
+## Tests
+
+```
+./venv/bin/pip install -r requirements-dev.txt
+./venv/bin/python -m pytest
+```
+
+Covers the command builder, options loading (including the brain2 live scan, its CSV fallback, and the nickname overlay), state/history/presets, the recorder's capture-backend detection and filename/sidecar helpers, an end-to-end drive of the TUI wizard with mocked prompts, and the web UI via Flask's test client.

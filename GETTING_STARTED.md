@@ -41,7 +41,7 @@ Everything is a question, one at a time. Use the **arrow keys** to move up and d
 
 ![Language selection screen](docs/screenshots/01-language.png)
 
-**2. Vehicle number** — just type the number, e.g. `123` for truck-123:
+**2. Vehicle number** — start typing the number (e.g. `123` for truck-123) and matching suggestions pop up as you type. You can also arrow down through them instead of typing:
 
 ![Vehicle name prompt](docs/screenshots/02-vehicle-name.png)
 
@@ -49,11 +49,9 @@ Everything is a question, one at a time. Use the **arrow keys** to move up and d
 
 ![Launch config selection list](docs/screenshots/03-launch-config.png)
 
-**4. Map key** (optional) — same idea, pick one or choose `-- none --`:
+A couple more quick questions follow the same pattern (the route — organized by map, just pick one or choose `-- none --` — and whether to enable Japan driving mode) — pick an answer and press Enter each time.
 
-![Map key selection list](docs/screenshots/04-map-key.png)
-
-A couple more quick questions follow the same pattern (route, and whether to enable Japan driving mode) — just pick an answer and press Enter.
+*Right after the language one, a menu asks **"What do you want to do?"** — **Build a new command** is the usual path (pick it to answer the questions below). **Record the screen only** skips the questions and goes straight to the recording flow described later, and once you've saved presets or built commands before, those appear here too for one-step rebuilds.*
 
 **5. Your command is ready:**
 
@@ -61,9 +59,11 @@ A couple more quick questions follow the same pattern (route, and whether to ena
 
 The finished command is shown on screen **and copied to your clipboard automatically** — meaning you can paste it (Cmd + V) wherever you actually need to run it, without retyping anything.
 
+You may also be asked **"Save these choices as a preset?"** — answer Yes, give it a name, and next time you can rebuild that exact command in one step from the shortcut question mentioned above. Answer No (or just press Enter) to skip it.
+
 ## Recording your screen
 
-Right after your command is ready, you're asked whether to record the screen for this run (see the last line in the screenshot above). This is entirely optional and controlled with single key presses — no need to press Enter for these:
+Right after your command is ready, you're asked whether to record the screen for this run (see the last line in the screenshot above). This is entirely optional and controlled with single key presses — no need to press Enter for these. The tool picks the right recording program for your machine automatically (and installs it if it's missing — on a Mac that's `ffmpeg` via Homebrew; on Linux it varies by desktop).
 
 - Press **`r`** to start recording, or **`q`** to skip it.
 
@@ -107,10 +107,15 @@ Recordings are organized automatically into a folder named for today's date, so 
 
 The very first time you ever record your screen on a given computer, macOS will interrupt with a system popup asking whether your terminal app is allowed to record the screen. Click **Allow** (or **Open System Settings** and turn on the switch next to your terminal app). If you accidentally click Deny, or the popup never appeared, go to  **System Settings → Privacy & Security → Screen Recording** and turn the switch on for your terminal app, then quit and reopen the terminal.
 
+On Linux, the first recording may show a similar screen-sharing approval popup — approve it and the recording starts. If nothing is installed to record with, the tool either installs it for you automatically or tells you exactly what to install.
+
 ## Frequently asked questions
 
 **I made a mistake on an earlier question — do I have to start over?**
 No — most questions offer a **`<< Back`** option in the list, or (for typed answers) you can type `back`.
+
+**What's a preset?**
+A saved set of answers (vehicle, config, map, route, and the Japan driving toggle) under a name you choose. When a new truck or route is what you build every morning, save it once and rebuild it with two key presses after that.
 
 **I don't have a Polarion test case id yet — is that okay?**
 Yes, just type `skip` or press Enter past that question. Nothing about the recording depends on having one.
