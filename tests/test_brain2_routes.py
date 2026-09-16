@@ -48,6 +48,14 @@ class TestFindBrain2Repo:
         monkeypatch.setenv("BRAIN2_REPO_PATH", str(tmp_path / "brain2"))
         assert find_brain2_repo() is None
 
+    def test_default_candidates_used_when_env_unset(self, tmp_path, monkeypatch):
+        # The conftest fixture blanks the defaults for hermeticity; set
+        # them back to prove the fallback discovery itself still works.
+        repo = make_repo(tmp_path / "checkout", {"a.txtpb": ""})
+        monkeypatch.delenv("BRAIN2_REPO_PATH", raising=False)
+        monkeypatch.setattr(brain2_routes, "DEFAULT_REPO_CANDIDATES", (str(tmp_path / "checkout"),))
+        assert find_brain2_repo() == str(repo)
+
 
 class TestScanRoutePairs:
     def test_parses_identifier_variants(self, tmp_path):

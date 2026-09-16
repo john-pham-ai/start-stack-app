@@ -42,14 +42,14 @@ The first time you run `./launch.sh`, it also adds a `launch` alias to your shel
 Pick values from the dropdowns and click **Build command** to see the resulting `start_stack` command, with a button to copy it to your clipboard.
 
 - The **vehicle name** is a text box with suggestions — start typing (either `807` or `truck-807` works) or click it to pick from the list. A bare number is assembled into `truck-<number>` for you.
-- The **route** dropdown lists every route, grouped by the map it belongs to (routes carry their map — see [Where the options come from](#where-the-options-come-from) below — so there's no separate map picker).
+- The **route** box is a combobox: click it (or press ↓) to see every route grouped by the map it belongs to, or type a few letters to filter — route names, values, and map names all match. Pick with a click or arrow keys + Enter. (Routes carry their map — see [Where the options come from](#where-the-options-come-from) below — so there's no separate map picker.)
 - The **日本語 / English** link in the top right switches the page's language. Switching languages resets the form to its defaults (it doesn't carry over your other picks), and selecting **日本語** pre-checks `enable_japan_driving` (you can still uncheck it).
 - If you've saved any **presets**, a dropdown above the form with a **Load** button uses one immediately: values presets get built into a command, custom command presets are shown verbatim, and the page auto-copies the result to your clipboard — no re-walking the form. Pick one and click **Remove a preset** to delete it (both buttons enable once a preset is selected). In the main form, type a name and click **Save as preset** to save the currently picked values, or paste any raw command into the **Custom command** box and click **Save a custom command as a preset**.
 - **Recent commands** lists the last commands you built (from either the web UI or the TUI — they share one history), each with its own copy button, so re-copying an earlier command never means re-walking the form.
 
 ## TUI
 
-Run `./launch.sh` and answer each prompt with the arrow keys and Enter. Every screen after the first offers `<< Back` to return to the previous answer, and `Quit` to cancel immediately (Ctrl+C also quits).
+Run `./launch.sh` and answer each prompt — pick with the arrow keys + Enter, or type when the prompt is a type-to-autofill one (vehicle and route). Every screen after the first offers `<< Back` to return to the previous answer, and `Quit` to cancel immediately (Ctrl+C also quits; the vehicle and route prompts take typed `back`/`quit` instead).
 
 Steps, in order:
 
@@ -57,7 +57,7 @@ Steps, in order:
 2. **What do you want to do?** — always shown. **Build a new command** walks the full wizard; **Record the screen only** jumps straight into recording (the same flow `./recorder.sh` runs, in the language you just picked); **Fetch the latest Run ID from the truck** grabs the newest run id off the cabled truck (see [Fetch the latest Run ID from the truck](#fetch-the-latest-run-id-from-the-truck)), puts it on your clipboard, and brings the menu back; **Set up SSH for a truck (one-time per truck)** does the per-truck SSH setup — identity and alias named after the truck number (see [Per-truck SSH setup](#per-truck-ssh-setup-the-shared-ip-fix)) — then brings the menu back; **Save a custom command as a preset** stores any raw command — one you didn't build here — under a name for verbatim reuse (leading `$` prompts and the multi-line `\` form are cleaned up automatically); saved presets and recent commands join the menu once they exist, for one-step rebuilds — picking one prints the command, puts it on your clipboard, and then offers the same recording flow as a hand-built command (the only prompt it skips is save-as-preset — it's already saved); **Remove a preset** (shown once you have presets) picks one, confirms, and deletes it — then brings the menu back. Values that no longer exist in the current options (e.g. a route brain2 no longer has) are dropped with a note.
 3. **Vehicle name** — type to search: start entering a number and the matching trucks show up as suggestions. Type just the number (e.g. `807`) and it's assembled into `truck-807`. You can also type `back` or `quit` here instead of a number to navigate.
 4. **Launch config** — a list of the 4 available configs. `sds_road_readiness` is listed first if you picked English; `etc_sds_road_readiness` is listed first if you picked 日本語.
-5. **Route** (optional) — every available route, sorted by map. A route name used by more than one map shows up as `route_name (map_name)` so the duplicates stay tellable apart.
+5. **Route** (optional) — a type-to-autofill prompt: start typing (a route or map name — both match) and the suggestions filter live; Tab or → accepts the highlighted one, or press ↓ on an empty line to browse every route (each titled `map_name — route_name`). Leave blank + Enter for no route; `back`/`quit` work here like at the vehicle prompt. A route name used by more than one map shows up as `route_name (map_name)` so the duplicates stay tellable apart.
 6. **Enable Japan driving mode?** — Yes/No. Defaults to **No** if you picked English, **Yes** if you picked 日本語 — either way, you can still pick the other answer.
 
 At the end, the command prints to the terminal and is copied to your clipboard automatically (if your system clipboard is accessible). For hand-built commands you're then asked whether to **save the choices as a preset** — give it a name and you can rebuild it in one step next time.
@@ -83,13 +83,14 @@ The whole thing is driven by single keypresses — no Enter needed except at the
 
 1. Press **`r`** to start recording, or **`q`** to skip it entirely.
 2. Once started, the terminal shows a live `● Recording... 00:07 (press 's' to stop)` line that ticks up every second so you can tell it's actually running. Perform your test run, then press **`s`** to stop.
-3. You're asked **keep or discard**: press **`k`** to keep it and continue, or **`d`** to throw it away — the file is deleted immediately and you're done, no naming prompts.
+3. You're asked **keep or discard**: press **`k`** to keep it and continue, or **`d`** to throw it away — the file is deleted immediately, no naming prompts.
 4. If you kept it, a Yes/No toggle asks whether to **pull the latest run id from the truck** — the answer is remembered and pre-selected next time. Yes fetches it off the cabled truck and prints the vehicle, hostname, run id, full log path and any warning before moving on (a `back` at the next prompt re-asks the run id as a paste with the fetched id as the default); No — or a failed fetch — gives the manual paste prompt (optional — leave it blank to skip).
 5. You're asked for a **Polarion test case id**. Type it, or:
    - `back` — re-enter the run id
    - `skip` (or just press Enter) — no test case id for this recording
 6. The video is saved to `~/screen_recordings/<today's date>/`, named `<timestamp>_<vehicle_name>_run-<run id>_tc-<test case id>.mp4` (any part you skipped is left out of the name). A sidecar `.json` file with the same name holds the run id, test case id, the Polarion link, the `start_stack` command, and the recording's duration.
 7. An **"Open recording folder"** link is printed right after — click it (in a terminal that supports clickable links, e.g. iTerm2, VS Code, kitty, recent Terminal.app) to jump straight to that dated folder in Finder. The plain folder path is also printed above it either way.
+8. Once the run is over (recording kept, skipped, failed, or discarded), the wizard puts you back at its **main menu** — the app stays open until you pick **Quit**. (The standalone `recorder` command just exits instead; it has no menu to return to.)
 
 If you type `skip` at the test case prompt, that's remembered — the next recording defaults to `skip` too, so you don't have to keep re-declining it. Entering a real test case id switches the default back.
 

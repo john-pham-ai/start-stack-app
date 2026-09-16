@@ -383,7 +383,9 @@ class TestRunRecordingFlow:
     def test_discard(self, flow_setup, capsys):
         knobs, events, _holder = flow_setup
         knobs["keep"] = False
-        assert recorder.run_recording_flow("en", {}) is None
+        # A discard is its own sentinel (not None, which means skipped or
+        # failed) so the wizard can loop back to its start menu.
+        assert recorder.run_recording_flow("en", {}) is recorder.DISCARDED
         assert events == ["keypress", "ask", "start", "stop", "keep?", "discard"]
         out = capsys.readouterr().out
         assert "discarded" in out
@@ -512,8 +514,10 @@ class TestInstallers:
         label, command = recorder._installer_for("wf-recorder")
         assert (label, command) == ("apt", ["sudo", "apt-get", "install", "-y", "wf-recorder"])
 
-    def test_pacman(self, monkeypatch, fake_bin):
-        put_tool(fake_bin, "pacman")
+    def test_pacman(self, monkeypatch, isolated_bin):
+        # isolated_bin: on a machine with real apt on PATH, apt would win
+        # over the fake pacman (apt is preferred in INSTALLERS).
+        put_tool(isolated_bin, "pacman")
         label, command = recorder._installer_for("gpu-screen-recorder")
         assert (label, command) == (
             "pacman",

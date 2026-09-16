@@ -6,13 +6,16 @@ from questionary import Choice
 import launch
 from stack_options import Option
 from launch import (
+    BACK,
     NEW,
     QUIT,
     RECORD_ONLY,
     LoadedCommand,
+    ask_route,
     ask_start_menu,
     choices_for,
     pin_first,
+    route_choices_for,
     safe_default,
     summarize_entry,
     validated,
@@ -63,6 +66,114 @@ class TestChoicesFor:
         result = choices_for({"x": [Option("a", "Pretty A", "", "")]}, "x")
         assert result[0].title == "Pretty A"
         assert result[0].value == "a"
+
+
+class TestRouteChoicesFor:
+    def test_map_named_in_title(self):
+        # Both UIs search on the title as you type, so the map in the
+        # title lets typing a map name narrow the list.
+        options = make_options()
+        choices = route_choices_for(options, none_label="none")
+        assert choices[0].title == "none"
+        assert choices[0].value == ""
+        assert choices[1].title == "usa_zone_10 — shoreline_straight"
+        assert choices[1].value == "shoreline_straight"
+        assert choices[2].title == "jp_zone_53 — jp_loop"
+        assert choices[2].value == "jp_loop"
+
+    def test_ownerless_route_stays_bare(self):
+        options = {"route": [Option("x", "X", "", "")]}
+        assert route_choices_for(options)[1].title == "X"
+
+
+class TestAskRoute:
+    """ask_route: the route step as a type-to-autofill prompt."""
+
+    def ask_with(self, monkeypatch, answer):
+        """Mock autocomplete; returns the prompt instance ask_route built."""
+        created = []
+
+        class FakeAutocomplete:
+            def __init__(self, message, choices=None, default="", validate=None, **kwargs):
+                self.message = message
+                self.choices = choices
+                self.validate = validate
+                self.kwargs = kwargs
+                created.append(self)
+
+            def ask(self):
+                return answer
+
+        monkeypatch.setattr(launch.questionary, "autocomplete", FakeAutocomplete)
+        return created
+
+    def test_suggestions_carry_map_titled_entries(self, monkeypatch):
+        created = self.ask_with(monkeypatch, "")
+        ask_route("en", make_options(), none_label="-- none --")
+        prompt = created[0]
+        assert prompt.choices[0] == "-- none --"
+        assert "usa_zone_10 — shoreline_straight" in prompt.choices
+        assert "jp_zone_53 — jp_loop" in prompt.choices
+        # The prompt says how to navigate, like the vehicle prompt does.
+        assert "back" in prompt.message and "quit" in prompt.message
+
+    def test_suggestion_title_resolves_to_value(self, monkeypatch):
+        self.ask_with(monkeypatch, "usa_zone_10 — shoreline_straight")
+        assert ask_route("en", make_options()) == "shoreline_straight"
+
+    def test_typed_value_resolves(self, monkeypatch):
+        self.ask_with(monkeypatch, "jp_loop")
+        assert ask_route("en", make_options()) == "jp_loop"
+
+    def test_typed_label_resolves_to_value(self, monkeypatch):
+        options = {"route": [Option("v1", "Pretty Route", "m1", "")]}
+        self.ask_with(monkeypatch, "Pretty Route")
+        assert ask_route("en", options) == "v1"
+
+    def test_blank_means_no_route(self, monkeypatch):
+        self.ask_with(monkeypatch, "")
+        assert ask_route("en", make_options()) == ""
+
+    def test_none_suggestion_means_no_route(self, monkeypatch):
+        self.ask_with(monkeypatch, "-- none --")
+        assert ask_route("en", make_options(), none_label="-- none --") == ""
+
+    def test_back_and_quit_keywords(self, monkeypatch):
+        self.ask_with(monkeypatch, "back")
+        assert ask_route("en", make_options()) is BACK
+        self.ask_with(monkeypatch, "quit")
+        assert ask_route("en", make_options()) is QUIT
+
+    def test_ctrl_c_or_eof_returns_quit(self, monkeypatch):
+        self.ask_with(monkeypatch, None)
+        assert ask_route("en", make_options()) is QUIT
+
+    def test_easy_on_the_eyes_styling(self, monkeypatch):
+        # The prompt gets the toned-down style and doesn't nag while typing
+        # (partial text is never a full route, so a red bar per keystroke
+        # was just noise).
+        created = self.ask_with(monkeypatch, "")
+        ask_route("en", make_options())
+        kwargs = created[0].kwargs
+        assert kwargs["style"] is launch.AUTOCOMPLETE_STYLE
+        assert kwargs["validate_while_typing"] is False
+        rules = dict(launch.AUTOCOMPLETE_STYLE.style_rules)
+        assert "completion-menu" in rules  # the menu itself is restyled
+        assert "noreverse" in rules["completion-menu.completion.current selected"]
+
+    def test_validate_accepts_known_and_rejects_unknown(self, monkeypatch):
+        created = self.ask_with(monkeypatch, "")
+        ask_route("en", make_options(), none_label="-- none --")
+        validate = created[0].validate
+        # Everything the prompt should let through...
+        assert validate("") is True
+        assert validate("  ") is True
+        assert validate("usa_zone_10 — shoreline_straight") is True
+        assert validate("shoreline_straight") is True
+        assert validate("back") is True
+        assert validate("QUIT") is True
+        # ...and what it must not.
+        assert validate("rift") is not True
 
 
 class TestSummarizeEntry:
@@ -331,24 +442,32 @@ class TestWizardEndToEnd:
 
         answers = {
             "Language / 言語": "en",
-            "What do you want to do?": NEW,
             "launch_config": "sds_road_readiness",
-            "route (optional)": "shoreline_straight",
             "enable_japan_driving": False,
         }
+        # The menu is asked again once the command flow finishes — the app
+        # returns there instead of exiting now — and only Quit ends it.
+        menu_answers = [NEW, QUIT]
 
         class FakeSelect:
             def __init__(self, message, choices=None, default=None):
                 self.message = message
 
             def ask(self):
+                if self.message == "What do you want to do?":
+                    return menu_answers.pop(0)
                 return answers[self.message]
 
         class FakeAutocomplete:
-            def __init__(self, message, choices=None, default="", validate=None):
-                self.default = default
+            def __init__(self, message, choices=None, default="", validate=None, **kwargs):
+                self.message = message
 
             def ask(self):
+                # The vehicle prompt answers a number; the route prompt
+                # answers a suggestion title, which resolves to its value.
+                # (The CSV's shoreline_straight lives on shoreline_zone_10.)
+                if "route" in self.message:
+                    return "shoreline_zone_10 — shoreline_straight"
                 return "812"
 
         monkeypatch.setattr(launch.questionary, "select", FakeSelect)
@@ -377,11 +496,10 @@ class TestWizardEndToEnd:
         """Removing a preset from the menu returns to the menu afterwards."""
         import recorder
 
-        menu_answers = [launch.REMOVE_PRESET, launch.NEW]
+        menu_answers = [launch.REMOVE_PRESET, launch.NEW, launch.QUIT]
         wizard_answers = {
             "Language / 言語": "en",
             "launch_config": "sds_road_readiness",
-            "route (optional)": "",
             "enable_japan_driving": False,
         }
         removed = []
@@ -396,11 +514,11 @@ class TestWizardEndToEnd:
                 return wizard_answers[self.message]
 
         class FakeAutocomplete:
-            def __init__(self, message, choices=None, default="", validate=None):
-                pass
+            def __init__(self, message, choices=None, default="", validate=None, **kwargs):
+                self.message = message
 
             def ask(self):
-                return "812"
+                return "" if "route" in self.message else "812"
 
         monkeypatch.setattr(launch.questionary, "select", FakeSelect)
         monkeypatch.setattr(launch.questionary, "autocomplete", FakeAutocomplete)
@@ -437,6 +555,8 @@ class TestWizardEndToEnd:
                 f,
             )
 
+        menu_asks = {"count": 0}
+
         class FakeSelect:
             def __init__(self, message, choices=None, default=None):
                 self.message = message
@@ -446,6 +566,14 @@ class TestWizardEndToEnd:
                 if self.message == "Language / 言語":
                     return "en"
                 by_title = {c.title: c.value for c in self.choices}
+                if self.message == "What do you want to do?":
+                    # A new instance is built per prompt, so the counter
+                    # lives outside; the flow finishes back at the menu,
+                    # and only Quit ends the app now.
+                    menu_asks["count"] += 1
+                    if menu_asks["count"] > 1:
+                        return launch.QUIT
+                    return by_title["Preset: raw run (custom)"]
                 return by_title["Preset: raw run (custom)"]
 
         flow_calls = []
@@ -493,6 +621,7 @@ class TestWizardEndToEnd:
             )
 
         wizard_prompts = []
+        menu_asks = {"count": 0}
 
         class FakeSelect:
             def __init__(self, message, choices=None, default=None):
@@ -504,6 +633,12 @@ class TestWizardEndToEnd:
                     return "en"
                 if self.message == "What do you want to do?":
                     by_title = {c.title: c.value for c in self.choices}
+                    # First ask loads the preset; after the flow the app is
+                    # back at the menu, and Quit is the only exit. The
+                    # counter lives outside — one instance per prompt.
+                    menu_asks["count"] += 1
+                    if menu_asks["count"] > 1:
+                        return launch.QUIT
                     return by_title["Preset: night loop"]
                 wizard_prompts.append(self.message)  # no step should be asked
                 raise AssertionError(f"unexpected wizard prompt: {self.message}")
@@ -537,11 +672,10 @@ class TestWizardEndToEnd:
         """Saving a custom preset from the menu returns to the menu."""
         import recorder
 
-        menu_answers = [launch.SAVE_CUSTOM, launch.NEW]
+        menu_answers = [launch.SAVE_CUSTOM, launch.NEW, launch.QUIT]
         wizard_answers = {
             "Language / 言語": "en",
             "launch_config": "sds_road_readiness",
-            "route (optional)": "",
             "enable_japan_driving": False,
         }
         saved = []
@@ -556,11 +690,11 @@ class TestWizardEndToEnd:
                 return wizard_answers[self.message]
 
         class FakeAutocomplete:
-            def __init__(self, message, choices=None, default="", validate=None):
-                pass
+            def __init__(self, message, choices=None, default="", validate=None, **kwargs):
+                self.message = message
 
             def ask(self):
-                return "812"
+                return "" if "route" in self.message else "812"
 
         monkeypatch.setattr(launch.questionary, "select", FakeSelect)
         monkeypatch.setattr(launch.questionary, "autocomplete", FakeAutocomplete)
@@ -583,14 +717,16 @@ class TestWizardEndToEnd:
 
         answers = {
             "Language / 言語": "ja",
-            "何をしますか？": launch.RECORD_ONLY,
         }
+        menu_answers = [launch.RECORD_ONLY, launch.QUIT]
 
         class FakeSelect:
             def __init__(self, message, choices=None, default=None):
                 self.message = message
 
             def ask(self):
+                if self.message == "何をしますか？":
+                    return menu_answers.pop(0)
                 return answers[self.message]
 
         def fake_flow(lang, state, vehicle_name="", metadata=None):
@@ -602,12 +738,118 @@ class TestWizardEndToEnd:
 
         launch.main()
 
-        # Straight into recording, in the picked language, no command built.
+        # Straight into recording, in the picked language, no command built —
+        # then the menu again, because a finished flow no longer exits.
         assert calls == {"lang": "ja", "vehicle_name": ""}
+        assert menu_answers == []
         out = capsys.readouterr().out
         assert "--vehicle_name" not in out
+        assert "キャンセルしました。" in out  # the Quit that ended it
         # And no history was written for a record-only run.
         assert not os.path.exists(state_module.STATE_PATH)
+
+    def test_kept_recording_returns_to_start_menu(self, monkeypatch, capsys):
+        """The default after ANY finished flow is the menu, not an exit:
+        a kept (not discarded) record-only run comes back here too."""
+        import recorder
+
+        menu_returns = [launch.RECORD_ONLY, launch.QUIT]
+        monkeypatch.setattr(launch, "ask_start_menu", lambda state, lang: menu_returns.pop(0))
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        monkeypatch.setattr(
+            recorder, "run_recording_flow", lambda *a, **kw: ("/tmp/v.mp4", "/tmp/v.json")
+        )
+
+        launch.main()
+
+        assert menu_returns == []  # the menu was shown again after the kept run
+        assert "Cancelled." in capsys.readouterr().out
+
+    def test_discarded_record_only_returns_to_start_menu(self, monkeypatch, capsys):
+        """Discarding a record-only recording loops back to the start
+        menu instead of exiting the app."""
+        import recorder
+
+        menu_returns = [launch.RECORD_ONLY, launch.QUIT]
+        monkeypatch.setattr(launch, "ask_start_menu", lambda state, lang: menu_returns.pop(0))
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        monkeypatch.setattr(recorder, "run_recording_flow", lambda *a, **kw: recorder.DISCARDED)
+
+        launch.main()
+
+        assert menu_returns == []  # the menu was shown again after the discard
+        assert "Cancelled." in capsys.readouterr().out
+
+    def test_discarded_command_recording_returns_to_start_menu(self, monkeypatch, capsys):
+        """A discard at the end of a hand-built command also goes back to
+        the start menu rather than exiting."""
+        import recorder
+
+        menu_answers = [launch.NEW, launch.QUIT]
+        wizard_answers = {
+            "Language / 言語": "en",
+            "launch_config": "sds_road_readiness",
+            "enable_japan_driving": False,
+        }
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None):
+                self.message = message
+
+            def ask(self):
+                if self.message == "What do you want to do?":
+                    return menu_answers.pop(0)
+                return wizard_answers[self.message]
+
+        class FakeAutocomplete:
+            def __init__(self, message, choices=None, default="", validate=None, **kwargs):
+                self.message = message
+
+            def ask(self):
+                return "" if "route" in self.message else "812"
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        monkeypatch.setattr(launch.questionary, "autocomplete", FakeAutocomplete)
+        monkeypatch.setattr(launch.questionary, "confirm", lambda *a, **k: type("A", (), {"ask": lambda s: False})())
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        monkeypatch.setattr(recorder, "run_recording_flow", lambda lang, state, **kw: recorder.DISCARDED)
+
+        launch.main()
+
+        assert menu_answers == []  # NEW ran, then the menu showed again
+        out = capsys.readouterr().out
+        assert "--vehicle_name truck-812" in out
+        assert "Cancelled." in out
+
+    def test_discarded_custom_command_recording_returns_to_start_menu(self, monkeypatch, capsys):
+        """A discard after a reused custom preset goes back to the menu too."""
+        import recorder
+
+        loaded = LoadedCommand("raw run", "start_stack --vehicle_name truck-807")
+        menu_returns = [loaded, launch.QUIT]
+        monkeypatch.setattr(launch, "ask_start_menu", lambda state, lang: menu_returns.pop(0))
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        monkeypatch.setattr(recorder, "run_recording_flow", lambda *a, **kw: recorder.DISCARDED)
+
+        launch.main()
+
+        assert menu_returns == []
+        out = capsys.readouterr().out
+        assert "start_stack --vehicle_name truck-807" in out
+        assert "Cancelled." in out
 
 
 class TestAskStartMenu:

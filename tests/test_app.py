@@ -3,7 +3,8 @@ import json
 import pytest
 
 import state as state_module
-from app import app, normalize_vehicle_name
+from app import app, normalize_route, normalize_vehicle_name
+from stack_options import Option
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +40,30 @@ class TestNormalizeVehicleName:
         assert normalize_vehicle_name("bus-1") == "bus-1"
 
 
+class TestNormalizeRoute:
+    ROUTES = {
+        "route": [
+            Option("shoreline_terminal_10kph", "Shoreline Terminal - Slow", "shoreline_zone_10", ""),
+            Option("shoreline_straight", "shoreline_straight", "shoreline_zone_10", ""),
+        ]
+    }
+
+    def test_value_passthrough(self):
+        assert normalize_route(self.ROUTES, "shoreline_straight") == "shoreline_straight"
+
+    def test_label_resolves_to_value(self):
+        assert normalize_route(self.ROUTES, "Shoreline Terminal - Slow") == "shoreline_terminal_10kph"
+
+    def test_whitespace_stripped(self):
+        assert normalize_route(self.ROUTES, "  shoreline_straight ") == "shoreline_straight"
+
+    def test_unknown_becomes_empty(self):
+        assert normalize_route(self.ROUTES, "not_a_route") == ""
+
+    def test_empty_is_empty(self):
+        assert normalize_route(self.ROUTES, "") == ""
+
+
 class TestWebUI:
     def test_get_renders_form(self, client):
         page = client.get("/").get_data(as_text=True)
@@ -59,12 +84,42 @@ class TestWebUI:
         assert "--route shoreline_straight" in page
         assert "--map_key" not in page  # never emitted
 
-    def test_routes_grouped_by_map(self, client):
+    def test_route_combobox_rendered(self, client):
         page = client.get("/").get_data(as_text=True)
-        assert '<optgroup label="usa_zone_10">' in page
-        assert 'value="shoreline_straight"' in page
+        # The route picker is a combobox: search input + hidden value field...
+        assert 'id="route-input"' in page
+        assert 'id="route-value"' in page
+        assert "Type to filter — click for the full list" in page
+        # ...with every route (and its map) riding along as JSON for the JS.
+        assert "usa_zone_10" in page
+        assert "shoreline_straight" in page
         # No map_key dropdown anywhere.
         assert 'name="map_key"' not in page
+
+    def test_route_label_post_normalizes_to_value(self, client):
+        # Typed text matching a route's label submits as that route's value.
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+                "route": "Shoreline Terminal - Slow",
+            },
+        ).get_data(as_text=True)
+        assert "--route shoreline_terminal_10kph" in page
+
+    def test_unknown_route_left_out_of_command(self, client):
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "vehicle_name": "807",
+                "launch_config": "sds_road_readiness",
+                "route": "not_a_route",
+            },
+        ).get_data(as_text=True)
+        assert "--route" not in page
 
     def test_history_persisted_across_visits(self, client, isolated_state):
         client.post(
@@ -200,8 +255,9 @@ class TestWebUI:
         assert 'id="command"' in page  # rendered -> the auto-copy JS picks it up
         assert "--vehicle_name truck-807" in page
         assert "--route shoreline_straight" in page
-        # The form reflects the preset's values too.
-        assert 'value="shoreline_straight" selected' in page
+        # The form reflects the preset's values too: the hidden route field
+        # carries the value, the visible box shows its label.
+        assert 'id="route-value" value="shoreline_straight"' in page
         # And the load was recorded in history.
         state = json.loads(isolated_state.read_text())
         assert state["history"][0]["custom"] is False

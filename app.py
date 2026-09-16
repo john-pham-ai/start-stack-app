@@ -33,6 +33,14 @@ PAGE = """
   label { display: block; margin-top: 12px; font-weight: 600; }
   select, input[type=text], input[type=checkbox] { margin-top: 4px; }
   input[type=text] { width: 240px; }
+  .combobox { position: relative; width: 340px; }
+  .combobox input { width: 100%; box-sizing: border-box; }
+  .combobox-list { display: none; position: absolute; top: 100%; left: 0; right: 0; max-height: 280px; overflow-y: auto; background: #fff; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.15); z-index: 20; margin-top: 2px; }
+  .combobox-list.open { display: block; }
+  .combobox-group { padding: 6px 12px 2px; font-size: 0.8em; font-weight: 700; color: #666; }
+  .combobox-item { padding: 6px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .combobox-item:hover, .combobox-item.active { background: #eef; }
+  .combobox-empty { padding: 8px 12px; color: #999; }
   pre { background: #222; color: #eee; padding: 12px; border-radius: 6px; overflow-x: auto; margin-bottom: 8px; }
   button { margin-top: 8px; padding: 8px 16px; }
   .lang-switch { float: right; font-weight: normal; }
@@ -68,21 +76,17 @@ PAGE = """
     </select>
   </label>
   <label>{{ t(lang, 'route') }}
-    <select name="route">
-      <option value="">{{ t(lang, 'none_option') }}</option>
-      {# Routes grouped by the map they belong to (routes carry their map,
-         so the command needs no map flag — this is just visual grouping). #}
-      {% set routes_by_owner = routes | groupby('owner') %}
-      {% for owner, group in routes_by_owner %}
-        {% if owner %}
-          <optgroup label="{{ owner }}">
-            {% for opt in group %}<option value="{{ opt.value }}" {% if opt.value == form.route %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
-          </optgroup>
-        {% else %}
-          {% for opt in group %}<option value="{{ opt.value }}" {% if opt.value == form.route %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
-        {% endif %}
-      {% endfor %}
-    </select>
+    {# A combobox: click to see every route grouped by map, or type a few
+       letters (route or map name) to filter. The hidden input carries the
+       chosen route's value; the visible one is the search/display box.
+       Routes carry their map, so the command needs no map flag — the
+       grouping is just visual. #}
+    <div class="combobox" id="route-box">
+      <input type="text" id="route-input" autocomplete="off"
+             placeholder="{{ t(lang, 'route_placeholder') }}" value="{{ route_label }}">
+      <input type="hidden" name="route" id="route-value" value="{{ form.route }}">
+      <div class="combobox-list" id="route-list"></div>
+    </div>
   </label>
   <label><input type="checkbox" name="enable_japan_driving" {% if form.enable_japan_driving %}checked{% endif %}> {{ t(lang, 'enable_japan_driving') }}</label>
   <button type="submit" name="action" value="build">{{ t(lang, 'build_command') }}</button>
@@ -173,6 +177,146 @@ PAGE = """
   })();
 
   (function () {
+    // Route combobox: focus/click shows the entire list grouped by map;
+    // typing filters it (route name, value, or map name all match); a
+    // click or arrow-keys + Enter picks. The hidden input carries the
+    // picked route's value; the visible input is the search box.
+    var ROUTES = {{ routes_data | tojson }};
+    var NONE_LABEL = {{ t(lang, 'none_option') | tojson }};
+    var box = document.getElementById("route-box");
+    var input = document.getElementById("route-input");
+    var hidden = document.getElementById("route-value");
+    var list = document.getElementById("route-list");
+    if (!box) return;
+
+    var active = -1;       // highlighted index into visibleRows
+    var visibleRows = [];  // {el, route} for the currently rendered rows
+
+    function matches(route, text) {
+      if (!text) return true;
+      text = text.toLowerCase();
+      return (route.l + "\n" + route.v + "\n" + route.o).toLowerCase().indexOf(text) !== -1;
+    }
+
+    function close() {
+      list.classList.remove("open");
+      active = -1;
+    }
+
+    function pick(route) {
+      hidden.value = route ? route.v : "";
+      input.value = route ? route.l : "";
+      close();
+    }
+
+    function highlight(i) {
+      if (active >= 0 && visibleRows[active]) visibleRows[active].el.classList.remove("active");
+      active = i;
+      if (i >= 0 && visibleRows[i]) {
+        var el = visibleRows[i].el;
+        el.classList.add("active");
+        el.scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function addRow(route, title) {
+      var el = document.createElement("div");
+      el.className = "combobox-item";
+      el.textContent = title;
+      if (route) el.title = route.v;
+      // mousedown (not click) so the input keeps focus through the pick.
+      el.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+        pick(route);
+      });
+      list.appendChild(el);
+      visibleRows.push({ el: el, route: route });
+    }
+
+    function render() {
+      var text = input.value.trim();
+      list.textContent = "";
+      visibleRows = [];
+      active = -1;
+
+      addRow(null, NONE_LABEL);
+
+      var groups = {};
+      var order = [];
+      ROUTES.forEach(function (r) {
+        if (!matches(r, text)) return;
+        if (!groups[r.o]) { groups[r.o] = []; order.push(r.o); }
+        groups[r.o].push(r);
+      });
+      order.sort();
+      var shown = 0;
+      order.forEach(function (owner) {
+        if (owner) {
+          var head = document.createElement("div");
+          head.className = "combobox-group";
+          head.textContent = owner;
+          list.appendChild(head);
+        }
+        groups[owner].forEach(function (r) { addRow(r, r.l); shown += 1; });
+      });
+
+      if (!shown) {
+        var empty = document.createElement("div");
+        empty.className = "combobox-empty";
+        empty.textContent = "—";
+        list.appendChild(empty);
+      }
+      list.classList.add("open");
+    }
+
+    input.addEventListener("focus", render);
+    input.addEventListener("input", function () {
+      hidden.value = "";  // typing invalidates any earlier pick
+      render();
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { close(); return; }
+      if (!list.classList.contains("open")) {
+        if (e.key === "ArrowDown") { render(); highlight(0); e.preventDefault(); }
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        highlight(Math.min(active + 1, visibleRows.length - 1));
+        e.preventDefault();
+      } else if (e.key === "ArrowUp") {
+        highlight(Math.max(active - 1, 0));
+        e.preventDefault();
+      } else if (e.key === "Enter") {
+        if (active >= 0 && visibleRows[active]) { pick(visibleRows[active].route); e.preventDefault(); }
+        // No row highlighted: let the form submit — the submit handler
+        // below resolves typed text against the list first.
+      }
+    });
+    document.addEventListener("click", function (e) {
+      if (!box.contains(e.target)) close();
+    });
+
+    // Submit-time resolution: if nothing was picked from the list, exact
+    // typed text still counts when it equals a route's value or label.
+    var form = input.closest("form");
+    form.addEventListener("submit", function () {
+      if (hidden.value) return;
+      var text = input.value.trim().toLowerCase();
+      if (!text) return;
+      for (var i = 0; i < ROUTES.length; i++) {
+        var r = ROUTES[i];
+        if (r.v.toLowerCase() === text || r.l.toLowerCase() === text) {
+          hidden.value = r.v;
+          input.value = r.l;
+          return;
+        }
+      }
+      // Unmatched text: treat it as no route (the server does the same).
+      input.value = "";
+    });
+  })();
+
+  (function () {
     var STR_COPIED = {{ t(lang, 'copied') | tojson }};
     var STR_COPY_FAILED = {{ t(lang, 'copy_failed') | tojson }};
 
@@ -233,6 +377,35 @@ def normalize_vehicle_name(value):
     if VEHICLE_NUMBER_RE.match(value):
         return f"truck-{value}"
     return value
+
+
+def normalize_route(options, value):
+    """Accept a route value or its display label; unknown text becomes "".
+
+    The combobox normally submits a picked route's value, but typed text
+    that exactly matches a label ("Shoreline Terminal - Slow") is also
+    accepted. Anything else is treated as no route — a garbage --route
+    would just make the built command invalid.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    for opt in options["route"]:
+        if opt.value == value:
+            return opt.value
+    lowered = value.lower()
+    for opt in options["route"]:
+        if opt.label.lower() == lowered:
+            return opt.value
+    return ""
+
+
+def route_label_for(options, value):
+    """The display label for a route value ("" when unknown/empty)."""
+    for opt in options["route"]:
+        if opt.value == value:
+            return opt.label
+    return ""
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -311,7 +484,7 @@ def index():
         else:  # build / save_preset
             form["vehicle_name"] = normalize_vehicle_name(request.form.get("vehicle_name", ""))
             form["launch_config"] = request.form.get("launch_config", "")
-            form["route"] = request.form.get("route", "")
+            form["route"] = normalize_route(options, request.form.get("route", ""))
             form["enable_japan_driving"] = "enable_japan_driving" in request.form
             command = build_command(
                 vehicle_name=form["vehicle_name"],
@@ -327,6 +500,11 @@ def index():
         PAGE,
         options=options,
         routes=options["route"],
+        # The combobox needs the routes as {v, l, o} JSON (value/label/map).
+        routes_data=[
+            {"v": opt.value, "l": opt.label, "o": opt.owner} for opt in options["route"]
+        ],
+        route_label=route_label_for(options, form["route"]),
         form=form,
         command=command,
         truck_result=truck_result,

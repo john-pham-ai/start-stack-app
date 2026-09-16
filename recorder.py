@@ -53,6 +53,11 @@ POLARION_URL_TEMPLATE = os.environ.get(
 IN_PROGRESS_NAME = ".recording-in-progress"
 MAX_PART_LEN = 60
 
+# Returned by run_recording_flow when the user discarded the recording —
+# distinct from None (skipped/failed) so the wizard can send a discard back
+# to its start menu without treating a skip the same way.
+DISCARDED = object()
+
 # Package managers we can auto-install with, in the order we prefer them.
 INSTALLERS = [
     ("brew", ["brew", "install", "{pkg}"]),
@@ -559,7 +564,8 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
     identical. Prompts use the given language.
 
     Returns (video_path, sidecar_path) when a recording was kept and
-    finalized; None when recording was skipped, failed, or discarded.
+    finalized; DISCARDED when it was discarded; None when recording was
+    skipped or failed.
     """
     ready, hint = ensure_recording_deps()
     if not ready:
@@ -586,7 +592,7 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
         if not wait_for_keep_or_discard(t(lang, "keep_or_discard_prompt")):
             recording.discard()
             print(t(lang, "recording_discarded") + "\n")
-            return None
+            return DISCARDED
 
     run_id, test_case_id, _skipped = ask_run_id_and_test_case(lang, state, vehicle_name)
     video_path, sidecar_path = recording.finalize(

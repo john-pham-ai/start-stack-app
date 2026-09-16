@@ -1,5 +1,6 @@
 import pyperclip
 import questionary
+from prompt_toolkit.styles import Style
 from questionary import Choice
 
 import recorder
@@ -29,6 +30,7 @@ TRUCK_RUN = object()  # "fetch the latest run id from the truck" on the start me
 TRUCK_SETUP = object()  # "set up SSH for a truck" on the start menu
 SAVE_CUSTOM = object()  # "save a custom command as a preset" on the start menu
 REMOVE_PRESET = object()  # "remove a preset" on the start menu
+BACK_TO_MENU = object()  # a pass that should return to the start menu
 
 
 class LoadedCommand:
@@ -40,6 +42,32 @@ class LoadedCommand:
 
 STEPS = ["language", "vehicle_name", "launch_config", "route", "enable_japan_driving"]
 
+# Easier-on-the-eyes styling for the type-to-autofill prompts. questionary's
+# defaults paint every suggestion bold orange on a light-grey menu; this
+# uses a dark menu with plain light text, a soft blue highlight for the
+# current row, and a muted validation bar.
+AUTOCOMPLETE_STYLE = Style(
+    [
+        ("completion-menu", "bg:#2b2b2b #d0d0d0"),
+        ("completion-menu.completion", "bg:#2b2b2b #d0d0d0 nobold nounderline"),
+        ("completion-menu.completion answer", "bg:#2b2b2b #d0d0d0 nobold"),
+        ("completion-menu.completion.current", "bg:#3a5f8a #ffffff nobold"),
+        ("completion-menu.completion.current answer", "bg:#3a5f8a #ffffff nobold"),
+        # The current row also carries questionary's "selected" class, whose
+        # prompt_toolkit default is "reverse" — undo that so the row stays
+        # white-on-blue instead of flipping to blue-on-white.
+        ("completion-menu.completion.current selected", "noreverse"),
+        ("scrollbar.background", "bg:#3a3a3a"),
+        ("scrollbar.button", "bg:#6a6a6a"),
+        ("validation-toolbar", "bg:#3a3a3a #e0c060"),
+    ]
+)
+
+# Shared kwargs for both autocomplete prompts: the style above, and no
+# validation while typing — partial text is never a full route/number,
+# so a red bar on every keystroke was just noise. Enter still validates.
+AUTOCOMPLETE_KWARGS = {"style": AUTOCOMPLETE_STYLE, "validate_while_typing": False}
+
 PINNED_LAUNCH_CONFIG = {"en": ["sds_road_readiness"], "ja": ["etc_sds_road_readiness"]}
 
 
@@ -49,6 +77,64 @@ def choices_for(options, field, optional=False, opts_list=None, none_label="-- n
     if optional:
         result.insert(0, Choice(title=none_label, value=""))
     return result
+
+
+def route_choices_for(options, none_label="-- none --"):
+    """Route choices with the map named in each title.
+
+    Both UIs search on the displayed text, so a "map_name — route_name"
+    title lets typing a map name narrow things to that map's routes.
+    Values are untouched — the map is search/display context only (the
+    command needs no map flag; routes carry their map).
+    """
+    choices = [Choice(title=none_label, value="")]
+    for opt in options["route"]:
+        title = f"{opt.owner} — {opt.label}" if opt.owner else opt.label
+        choices.append(Choice(title=title, value=opt.value))
+    return choices
+
+
+def ask_route(lang, options, none_label="-- none --"):
+    """The route step as a type-to-autofill prompt.
+
+    Start typing (a route or map name — both match) and the suggestions
+    filter live; Tab or → accepts the highlighted one; ↓ on an empty
+    line shows every route. An empty line means no route. The answer
+    must resolve to a route — a suggestion title, its value, or its
+    label (the same resolution the web combobox does) — or back/quit.
+    """
+    choices = route_choices_for(options, none_label=none_label)
+    resolvable = {choice.title: choice.value for choice in choices}
+    resolvable[""] = ""  # an empty line is a valid answer: no route
+    for opt in options["route"]:
+        resolvable.setdefault(opt.value, opt.value)
+        resolvable.setdefault(opt.label, opt.value)
+
+    def resolve(text):
+        return resolvable.get((text or "").strip())
+
+    def valid(text):
+        stripped = (text or "").strip()
+        if stripped.lower() in ("back", "quit"):
+            return True
+        if resolve(stripped) is not None:
+            return True
+        return "Pick a route from the suggestions (or leave blank for none)."
+
+    answer = questionary.autocomplete(
+        t(lang, "route") + " " + t(lang, "nav_hint"),
+        choices=[choice.title for choice in choices],
+        validate=valid,
+        **AUTOCOMPLETE_KWARGS,
+    ).ask()
+    if answer is None:
+        return QUIT
+    answer = answer.strip()
+    if answer.lower() == "back":
+        return BACK
+    if answer.lower() == "quit":
+        return QUIT
+    return resolve(answer) or ""
 
 
 def pin_first(opts_list, pinned_values):
@@ -77,6 +163,7 @@ def ask_vehicle_name(lang, state, options, current_value=None):
         choices=numbers,
         default=default_number,
         validate=lambda text: True if text.strip() else "Enter a number (or 'back'/'quit').",
+        **AUTOCOMPLETE_KWARGS,
     ).ask()
     if answer is None:
         return QUIT
@@ -167,7 +254,7 @@ def run_custom_command(state, lang, loaded):
     fields. Like any other one-pick reuse, the same recording offer as a
     hand-built command follows (r to record, q to skip); the vehicle name
     for the recording's filename comes from the command itself, when it
-    carries one.
+    carries one. Afterwards it's the start menu again, like every flow.
     """
     command = loaded.command
     print("\n" + command + "\n")
@@ -323,11 +410,7 @@ def ask_step(step, values, options, state):
         quit_label = t(lang, "quit")
         default = safe_default(prior_answer or state.get("launch_config", {}).get(lang), choices)
     elif step == "route":
-        message = t(lang, "route")
-        choices = choices_for(
-            options, "route", optional=True, none_label=t(lang, "none_option")
-        )
-        quit_label = t(lang, "quit")
+        return ask_route(lang, options, none_label=t(lang, "none_option"))
     else:  # enable_japan_driving
         message = t(lang, step)
         choices = [Choice(title=t(lang, "yes"), value=True), Choice(title=t(lang, "no"), value=False)]
@@ -342,64 +425,49 @@ def ask_step(step, values, options, state):
     return QUIT if answer is None else answer
 
 
-def main():
-    options = load_options()
-    state = load_state()
-    values = {}
-    shortcut_values = None
-    i = 0
-    while i < len(STEPS):
-        answer = ask_step(STEPS[i], values, options, state)
-        if answer is BACK:
-            i -= 1
-            continue
-        if answer is QUIT:
-            print(t(values.get("language", "en"), "cancelled"))
-            return
-        values[STEPS[i]] = answer
-        i += 1
+def run_command_flow(options, state, lang, shortcut_values):
+    """Build (or reuse) a command, print and copy it, then offer recording.
 
-        # Right after the language is picked, the start menu. Removing or
-        # saving a preset loops back to the menu so you can carry on.
-        if STEPS[i - 1] == "language":
-            while True:
-                menu = ask_start_menu(state, values["language"])
-                if menu is QUIT:
-                    print(t(values["language"], "cancelled"))
-                    return
-                if menu is RECORD_ONLY:
-                    recorder.run_recording_flow(values["language"], state)
-                    return
-                if menu is TRUCK_RUN:
-                    run_truck_fetch(values["language"], state)
-                    continue
-                if menu is TRUCK_SETUP:
-                    run_truck_ssh_setup(values["language"])
-                    continue
-                if menu is REMOVE_PRESET:
-                    remove_preset(state, values["language"])
-                    continue
-                if menu is SAVE_CUSTOM:
-                    save_custom_command_preset(state, values["language"])
-                    continue
-                if isinstance(menu, LoadedCommand):
-                    run_custom_command(state, values["language"], menu)
-                    return
-                if menu is not NEW:
-                    # A values preset / recent command: the wizard is done —
-                    # exhaust the outer loop so no step gets asked, and the
-                    # command is built straight from the shortcut.
-                    shortcut_values = menu
-                    i = len(STEPS)
-                break
+    shortcut_values is None to walk the wizard for a hand-built command,
+    or a values dict loaded from a preset / recent entry. The wizard
+    starts past the language step (lang carries it), and 'back' on the
+    wizard's first step re-asks the language before returning to the
+    start menu — same back behavior the wizard always had.
 
-    lang = values["language"]
-    if shortcut_values is not None:
+    Returns (lang, outcome): outcome is BACK_TO_MENU when the pass should
+    return to the start menu (the recording was discarded, or the user
+    backed off the wizard's first step), QUIT when the user quit, None
+    when the pass is over. lang is the language to continue with — it
+    changes when the language was re-picked on the way back out.
+    """
+    if shortcut_values is None:
+        values = {"language": lang}
+        i = 1  # the language is already picked
+        while i < len(STEPS):
+            answer = ask_step(STEPS[i], values, options, state)
+            if answer is BACK:
+                if i == 1:
+                    # Backing off the wizard's first step re-asks the
+                    # language; afterwards it's the start menu again.
+                    new_lang = ask_step("language", values, options, state)
+                    if new_lang is QUIT:
+                        print(t(values.get("language", "en"), "cancelled"))
+                        return values["language"], QUIT
+                    return new_lang, BACK_TO_MENU
+                i -= 1
+                continue
+            if answer is QUIT:
+                print(t(values.get("language", "en"), "cancelled"))
+                return values["language"], QUIT
+            values[STEPS[i]] = answer
+            i += 1
+    else:
         values, dropped = validated(shortcut_values, options)
         if dropped:
             print(t(lang, "invalid_option_note").format(", ".join(dropped)) + "\n")
         values["language"] = lang
 
+    lang = values["language"]
     state["vehicle_number"] = values["vehicle_name"][len("truck-") :]
     state.setdefault("launch_config", {})[lang] = values["launch_config"]
 
@@ -435,20 +503,83 @@ def main():
     # wizard values (validated above), so the metadata is identical; the
     # only thing a loaded preset skips is the save-preset prompt above,
     # since it's by definition already saved.
-    recorder.run_recording_flow(
-        lang,
-        state,
-        vehicle_name=values["vehicle_name"],
-        metadata={
-            "command": command,
-            "launch_config": values["launch_config"],
-            # The map isn't a command flag anymore — routes carry
-            # it — but it's still worth recording per run.
-            "map_key": map_key_for_route(options, values["route"]),
-            "route": values["route"],
-            "enable_japan_driving": values["enable_japan_driving"],
-        },
-    )
+    if (
+        recorder.run_recording_flow(
+            lang,
+            state,
+            vehicle_name=values["vehicle_name"],
+            metadata={
+                "command": command,
+                "launch_config": values["launch_config"],
+                # The map isn't a command flag anymore — routes carry
+                # it — but it's still worth recording per run.
+                "map_key": map_key_for_route(options, values["route"]),
+                "route": values["route"],
+                "enable_japan_driving": values["enable_japan_driving"],
+            },
+        )
+        is recorder.DISCARDED
+    ):
+        return lang, BACK_TO_MENU
+    return lang, None
+
+
+def run_start_menu_session(options, state, lang):
+    """The start menu loop — the app's only way out is an explicit Quit.
+
+    Every flow (truck fetch/setup, preset save/remove, record-only, a
+    custom preset, a built or reused command with its recording offer)
+    ends back at the menu rather than closing the app. Quit is the only
+    exit: picked on the start menu, or at a wizard step.
+
+    Returns the language (it can be re-picked by backing out of the
+    wizard's first step), and nothing else — the loop only ends on Quit.
+    """
+    while True:
+        menu = ask_start_menu(state, lang)
+        if menu is QUIT:
+            print(t(lang, "cancelled"))
+            return lang
+        if menu is TRUCK_RUN:
+            run_truck_fetch(lang, state)
+            continue
+        if menu is TRUCK_SETUP:
+            run_truck_ssh_setup(lang)
+            continue
+        if menu is REMOVE_PRESET:
+            remove_preset(state, lang)
+            continue
+        if menu is SAVE_CUSTOM:
+            save_custom_command_preset(state, lang)
+            continue
+        if menu is RECORD_ONLY:
+            recorder.run_recording_flow(lang, state)
+            continue  # kept, skipped, failed or discarded — menu either way
+        if isinstance(menu, LoadedCommand):
+            run_custom_command(state, lang, menu)
+            continue
+        # NEW, or a values preset / recent command. Quitting at a wizard
+        # step is the one command-flow outcome that ends the app; a
+        # discarded recording or backing out of the first step both land
+        # back here, like every other finished flow.
+        lang, outcome = run_command_flow(options, state, lang, None if menu is NEW else menu)
+        if outcome is QUIT:
+            return lang
+        continue
+
+
+def main():
+    options = load_options()
+    state = load_state()
+
+    # The language is picked once, up front — then the start menu loop,
+    # where every flow begins and ends. The app only exits on Quit.
+    answer = ask_step("language", {}, options, state)
+    if answer is QUIT:
+        print(t("en", "cancelled"))
+        return
+
+    run_start_menu_session(options, state, answer)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,7 @@ Everything is a question, one at a time. Use the **arrow keys** to move up and d
 
 ![Launch config selection list](docs/screenshots/03-launch-config.png)
 
-A couple more quick questions follow the same pattern (the route — organized by map, just pick one or choose `-- none --` — and whether to enable Japan driving mode) — pick an answer and press Enter each time.
+A couple more quick questions follow the same pattern (the route — a type-to-autofill list: start typing a few letters — route or map name, either works — and the matching routes appear; press Tab to take the highlighted one, or leave it blank for none — and whether to enable Japan driving mode) — pick an answer and press Enter each time.
 
 *Right after the language one, a menu asks **"What do you want to do?"** — **Build a new command** is the usual path (pick it to answer the questions below). **Record the screen only** skips the questions and goes straight to the recording flow described later, and once you've saved presets or built commands before, those appear here too for one-step rebuilds.*
 

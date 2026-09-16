@@ -11,6 +11,10 @@ TRANSLATIONS = {
     },
     "launch_config": {"en": "launch_config", "ja": "起動設定（launch_config）"},
     "route": {"en": "route (optional)", "ja": "ルート（route・任意）"},
+    "route_placeholder": {
+        "en": "Type to filter — click for the full list",
+        "ja": "入力して絞り込み — クリックで全一覧",
+    },
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
     "build_command": {"en": "Build command", "ja": "コマンドを作成"},
