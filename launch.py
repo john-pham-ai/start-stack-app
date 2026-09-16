@@ -5,10 +5,14 @@ from questionary import Choice
 
 import recorder
 import truck
+from questionary.prompts.common import InquirerControl
 from routes_sync import synced_commit
+from self_update import BLOCKED, UPDATED, self_update
 from stack_options import build_command, load_options, map_key_for_route
 from state import (
     CUSTOM_PRESET,
+    MAX_LOOPS,
+    LoopBucketFull,
     command_entry_values,
     command_values,
     delete_loop,
@@ -39,6 +43,23 @@ DRIVE_LOOP = object()  # "drive a closed-loop mileage route" on the start menu
 BUILD_LOOP = object()  # "build a closed-loop mileage route" on the start menu
 REMOVE_LOOP = object()  # "remove a saved loop" on the start menu
 BACK_TO_MENU = object()  # a pass that should return to the start menu
+
+# Start-menu shortcut keys (press, then Enter). Presets get the number-row
+# symbols in save order; the recent runs sit at the bottom of the menu and
+# take A/S/D/F (letters are bound lowercase — the physical key, unshifted);
+# the saved Japan loops take Q/W/E/R, which is also why the loop bucket is
+# capped at 4 (state.MAX_LOOPS).
+PRESET_SHORTCUTS = ("!", "@", "#", "$", "%", "^", "&", "*", "(", ")")
+RECENT_SHORTCUTS = ("a", "s", "d", "f")
+LOOP_SHORTCUTS = ("q", "w", "e", "r")
+RECENT_MENU_LIMIT = len(RECENT_SHORTCUTS)
+
+# questionary only validates shortcut keys drawn from 1-0/a-z, and its
+# auto-assign pool stops there too. The number-row symbols aren't in the
+# pool, so extend it once here: with use_shortcuts=True the menu's symbol
+# shortcuts pass validation and register their key bindings; the plain
+# menu entries keep questionary's automatic 1, 2, 3, ... keys.
+InquirerControl.SHORTCUT_KEYS = InquirerControl.SHORTCUT_KEYS + list(PRESET_SHORTCUTS)
 
 
 class LoadedCommand:
@@ -218,10 +239,14 @@ def summarize_entry(entry):
 def ask_start_menu(state, lang):
     """The first menu after the language pick.
 
-    Always shown. Recording-only mode and saving a custom command preset
-    are always one pick away; presets and recent commands join the list
-    once they exist, and so do the closed-loop mileage entries — driving
-    one pick, building one always available, removing one once any are
+    Always shown, and keyboard-first: every entry has a shortcut (press
+    the key, then Enter — questionary hands out 1, 2, 3... to the fixed
+    entries), presets take the number-row symbols !..) in save order, the
+    Japan loops take Q/W/E/R, and the recent runs sit at the bottom with
+    A/S/D/F — only the last RECENT_MENU_LIMIT runs are listed. Recording-
+    only mode and saving a custom command preset are always one pick
+    away; the closed-loop entries join once relevant — driving one per
+    saved loop, building one always available, removing one once any are
     saved. Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM /
     REMOVE_PRESET / DRIVE_LOOP / BUILD_LOOP / REMOVE_LOOP / QUIT), a
     ("loop", name) tuple for a saved loop, a values dict loaded from a
@@ -229,8 +254,13 @@ def ask_start_menu(state, lang):
     command preset.
     """
     presets = state.get("presets", {})
-    history = get_history(state, limit=10)
+    history = get_history(state, limit=RECENT_MENU_LIMIT)
     loops = state.get("loops", {})
+
+    def shortcut(keys, index):
+        """The key for the index-th entry of a shortcutted group, or None
+        past the end (questionary then auto-assigns a spare key)."""
+        return keys[index] if index < len(keys) else None
 
     choices = [
         Choice(title=t(lang, "start_new"), value=NEW),
@@ -240,26 +270,41 @@ def ask_start_menu(state, lang):
         Choice(title=t(lang, "save_custom_preset"), value=SAVE_CUSTOM),
         Choice(title=t(lang, "loop_build_menu"), value=BUILD_LOOP),
     ]
-    for name, entry in presets.items():
+    for index, (name, entry) in enumerate(presets.items()):
         title = f"{t(lang, 'preset_label')}: {name}"
         if preset_kind(entry) == CUSTOM_PRESET:
             title += f" {t(lang, 'custom_tag')}"
-        choices.append(Choice(title=title, value=("preset", name)))
-    for idx, entry in enumerate(history):
-        summary = summarize_entry(entry)
-        choices.append(Choice(title=f"{t(lang, 'recent_label')}: {summary}", value=("history", idx)))
+        choices.append(
+            Choice(title=title, value=("preset", name),
+                   shortcut_key=shortcut(PRESET_SHORTCUTS, index))
+        )
     if presets:
         choices.append(Choice(title=t(lang, "remove_preset"), value=REMOVE_PRESET))
-    # Saved loops: drive entries near the top of their own group so a
-    # mileage run is always one pick once the loop exists.
-    for name in loops:
+    # Saved loops: drive entries right after the presets, each one a
+    # Q/W/E/R keystroke away.
+    for index, name in enumerate(loops):
         title = f"{t(lang, 'loop_menu')} — {name}"
-        choices.append(Choice(title=title, value=("loop", name)))
+        choices.append(
+            Choice(title=title, value=("loop", name),
+                   shortcut_key=shortcut(LOOP_SHORTCUTS, index))
+        )
     if loops:
         choices.append(Choice(title=t(lang, "loop_remove_menu"), value=REMOVE_LOOP))
+    # The recent runs live at the bottom of the menu, last 4 only.
+    for index, entry in enumerate(history):
+        summary = summarize_entry(entry)
+        choices.append(
+            Choice(title=f"{t(lang, 'recent_label')}: {summary}", value=("history", index),
+                   shortcut_key=shortcut(RECENT_SHORTCUTS, index))
+        )
     choices.append(Choice(title=t(lang, "quit"), value=QUIT))
 
-    answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
+    answer = questionary.select(
+        t(lang, "menu_prompt"),
+        choices=choices,
+        use_shortcuts=True,
+        instruction=t(lang, "menu_shortcut_hint"),
+    ).ask()
     if answer is None or answer is QUIT:
         return QUIT
     if answer in (
@@ -472,12 +517,17 @@ def build_loop(state, lang, options):
 
     The base is the wizard minus the route step — the stops define the
     routes — and Japan driving is forced on: this mode is a Japan route
-    setup. Returns (lang, outcome): outcome is the loop's name when the
-    tester wants to drive it right away, None when they don't, and the
-    QUIT / BACK_TO_MENU sentinels to leave (BACK_TO_MENU re-asked the
-    language first, so lang may change — same contract as
-    run_command_flow).
+    setup. The loop bucket holds MAX_LOOPS loops (the Q/W/E/R menu
+    shortcuts); a full bucket is refused up front rather than after the
+    stops have been typed in. Returns (lang, outcome): outcome is the
+    loop's name when the tester wants to drive it right away, None when
+    they don't, and the QUIT / BACK_TO_MENU sentinels to leave
+    (BACK_TO_MENU re-asked the language first, so lang may change — same
+    contract as run_command_flow).
     """
+    if len(state.get("loops", {})) >= MAX_LOOPS:
+        print(t(lang, "loops_full") + "\n")
+        return lang, None
     values = {"language": lang}
     i = 1
     while i < len(STEPS):
@@ -512,7 +562,12 @@ def build_loop(state, lang, options):
         return lang, None
 
     name = (questionary.text(t(lang, "preset_name_prompt")).ask() or "").strip()
-    if not save_loop(state, name, values, stops):
+    try:
+        saved = save_loop(state, name, values, stops)
+    except LoopBucketFull:
+        print(t(lang, "loops_full") + "\n")
+        return lang, None
+    if not saved:
         print(t(lang, "loop_no_stops") + "\n")
         return lang, None
     save_state(state)
@@ -796,7 +851,7 @@ def run_command_flow(options, state, lang, shortcut_values):
     return lang, None
 
 
-def run_start_menu_session(options, state, lang):
+def run_start_menu_session(options, state, lang, app_update=None):
     """The start menu loop — the app's only way out is an explicit Quit.
 
     Every flow (truck fetch/setup, preset save/remove, record-only, a
@@ -804,16 +859,24 @@ def run_start_menu_session(options, state, lang):
     ends back at the menu rather than closing the app. Quit is the only
     exit: picked on the start menu, or at a wizard step.
 
+    app_update is the (status, detail) tuple self_update() returned before
+    the wizard started — the interesting ones get a line below.
+
     Returns the language (it can be re-picked by backing out of the
     wizard's first step), and nothing else — the loop only ends on Quit.
     """
-    # One note on where the routes came from, right after the language is
-    # known so it can be said in it (see routes_sync.py: GitHub-synced
-    # cache → local checkout → options.csv). Silence means "not synced"
-    # — offline, disabled, or falling back — the lists still work.
+    # Startup notes, said in the picked language: where the routes came
+    # from (see routes_sync.py: GitHub-synced cache → local checkout →
+    # options.csv; silence means not synced — offline, disabled, or
+    # falling back, the lists still work) and whether the app itself just
+    # fast-forwarded to origin (see self_update.py).
     commit = synced_commit()
     if commit:
         print(t(lang, "routes_synced").format(commit=commit))
+    if app_update and app_update[0] == UPDATED:
+        print(t(lang, "app_updated").format(hash=app_update[1]))
+    elif app_update and app_update[0] == BLOCKED:
+        print(t(lang, "app_update_blocked").format(hash=app_update[1]))
     while True:
         menu = ask_start_menu(state, lang)
         if menu is QUIT:
@@ -861,6 +924,11 @@ def run_start_menu_session(options, state, lang):
 
 
 def main():
+    # The app fetches its own repo first (see self_update.py): a clean
+    # tree fast-forwards to origin, a dirty one is left alone — the
+    # menu reports either, and the update lands on the next launch.
+    app_update = self_update()
+
     options = load_options()
     state = load_state()
 
@@ -871,7 +939,7 @@ def main():
         print(t("en", "cancelled"))
         return
 
-    run_start_menu_session(options, state, answer)
+    run_start_menu_session(options, state, answer, app_update=app_update)
 
 
 if __name__ == "__main__":

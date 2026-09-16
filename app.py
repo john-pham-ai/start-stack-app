@@ -3,6 +3,7 @@ import re
 from flask import Flask, render_template_string, request
 
 import truck
+from self_update import BLOCKED, UPDATED, self_update
 from stack_options import build_command, load_options
 from state import (
     CUSTOM_PRESET,
@@ -519,4 +520,11 @@ def index():
 
 
 if __name__ == "__main__":
+    # The server checks its own repo for updates before serving (a clean
+    # tree fast-forwards; the new code takes effect on the next start).
+    status, detail = self_update()
+    if status == UPDATED:
+        print(f"start-stack-app fast-forwarded to {detail} — restart to run the new version.")
+    elif status == BLOCKED:
+        print(f"start-stack-app {detail} is available — commit or stash local changes to receive it.")
     app.run(debug=True, port=5050)

@@ -162,6 +162,17 @@ def get_history(state, limit=None):
 # collide with values/custom presets in the menu or on disk.
 
 
+# The closed-loop bucket is capped: the start menu gives loops the
+# Q/W/E/R shortcut keys, and a bounded bucket keeps every saved loop one
+# keystroke away (an over-full menu would push entries off the screen).
+MAX_LOOPS = 4
+
+
+class LoopBucketFull(Exception):
+    """A 5th loop was saved (only MAX_LOOPS fit; re-saving an existing
+    name is always allowed)."""
+
+
 def loop_values(entry):
     """The base-command fields of a saved loop, with its stops.
 
@@ -181,11 +192,16 @@ def loop_values(entry):
 
 def save_loop(state, name, values, stops):
     """Save a closed loop under a name. Returns the name, or None if the
-    name is blank or there are no stops to drive."""
+    name is blank or there are no stops to drive. Raises LoopBucketFull
+    when the bucket is already at MAX_LOOPS and the name isn't one of
+    the existing loops."""
     name = (name or "").strip()
     stops = [route for route in ((route or "").strip() for route in (stops or [])) if route]
     if not name or not stops:
         return None
+    loops = state.get("loops", {})
+    if name not in loops and len(loops) >= MAX_LOOPS:
+        raise LoopBucketFull(name)
     state.setdefault("loops", {})[name] = {
         "vehicle_name": values.get("vehicle_name", ""),
         "launch_config": values.get("launch_config", ""),

@@ -249,7 +249,7 @@ class TestCustomPresets:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
 
             def ask(_):
@@ -263,7 +263,7 @@ class TestCustomPresets:
 
     def test_loading_custom_preset_returns_command(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -288,7 +288,7 @@ class TestCustomPresets:
         }
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -304,7 +304,7 @@ class TestCustomPresets:
         old_preset = {"vehicle_name": "truck-807", "launch_config": "cfg", "route": "", "enable_japan_driving": False}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -486,7 +486,7 @@ class TestWizardEndToEnd:
         menu_answers = [NEW, QUIT]
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
 
             def ask(self):
@@ -541,7 +541,7 @@ class TestWizardEndToEnd:
         removed = []
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
 
             def ask(self):
@@ -594,7 +594,7 @@ class TestWizardEndToEnd:
         menu_asks = {"count": 0}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
                 self.choices = choices
 
@@ -660,7 +660,7 @@ class TestWizardEndToEnd:
         menu_asks = {"count": 0}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
                 self.choices = choices
 
@@ -717,7 +717,7 @@ class TestWizardEndToEnd:
         saved = []
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
 
             def ask(self):
@@ -757,7 +757,7 @@ class TestWizardEndToEnd:
         menu_answers = [launch.RECORD_ONLY, launch.QUIT]
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
 
             def ask(self):
@@ -837,7 +837,7 @@ class TestWizardEndToEnd:
         }
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.message = message
 
             def ask(self):
@@ -895,7 +895,7 @@ class TestAskStartMenu:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
 
             def ask(_):
@@ -917,7 +917,7 @@ class TestAskStartMenu:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
 
             def ask(_):
@@ -934,14 +934,14 @@ class TestAskStartMenu:
             "Save a custom command as a preset",
             "Build a closed-loop mileage route (Japan)",
             "Preset: night loop",
-            "Recent: t · c",
             "Remove a preset",
+            "Recent: t · c",
             "Quit",
         ]
 
     def test_quit(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 pass
 
             def ask(_):
@@ -950,9 +950,82 @@ class TestAskStartMenu:
         monkeypatch.setattr(launch.questionary, "select", FakeSelect)
         assert ask_start_menu({"presets": {"p": {}}}, "en") is QUIT
 
+    def _menu_choices(self, monkeypatch, state):
+        captured = {}
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                captured["choices"] = choices
+                captured["kwargs"] = kwargs
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        ask_start_menu(state, "en")
+        return captured
+
+    def test_shortcuts_assigned_by_group(self, monkeypatch):
+        state = {
+            "presets": {name: {} for name in ("one", "two", "three")},
+            "loops": {"L1": {}, "L2": {}},
+            "history": [{"vehicle_name": "t", "launch_config": "c"} for _ in range(3)],
+        }
+        captured = self._menu_choices(monkeypatch, state)
+        by_key = {c.shortcut_key: c for c in captured["choices"] if c.shortcut_key}
+        # Presets: the number-row symbols, in save order.
+        assert by_key["!"].title == "Preset: one"
+        assert by_key["@"].title == "Preset: two"
+        assert by_key["#"].title == "Preset: three"
+        # Japan loops: Q/W/E/R.
+        assert by_key["q"].title.endswith("— L1")
+        assert by_key["w"].title.endswith("— L2")
+        # Recents (at the bottom): A/S/D/F.
+        assert by_key["a"].title.startswith("Recent:")
+        assert by_key["s"].title.startswith("Recent:")
+        assert by_key["d"].title.startswith("Recent:")
+        # The fixed entries carry no explicit key — questionary's own
+        # auto-assign hands them 1, 2, 3... when the real prompt runs.
+        assert launch.NEW in [c.value for c in captured["choices"] if c.shortcut_key is None]
+        # And the prompt runs in shortcut mode with a hint.
+        assert captured["kwargs"]["use_shortcuts"] is True
+        assert "press a shortcut key" in captured["kwargs"]["instruction"]
+
+    def test_recents_capped_at_four_and_on_the_bottom(self, monkeypatch):
+        # History is stored newest-first; six runs in, the menu shows the
+        # last four (t5 back to t2), nothing else, above Quit.
+        state = {"history": [{"vehicle_name": f"t{5-i}", "launch_config": "c"} for i in range(6)]}
+        captured = self._menu_choices(monkeypatch, state)
+        titles = [c.title for c in captured["choices"]]
+        recents = [c for c in captured["choices"] if c.title.startswith("Recent:")]
+        # The last 4 runs only — newest first is get_history's order.
+        assert [c.shortcut_key for c in recents] == ["a", "s", "d", "f"]
+        assert len(recents) == 4
+        # Recents sit below everything else, newest first, Quit last.
+        assert titles[-5:] == [
+            "Recent: t5 · c",
+            "Recent: t4 · c",
+            "Recent: t3 · c",
+            "Recent: t2 · c",
+            "Quit",
+        ]
+
+    def test_past_the_shortcut_pool_no_explicit_key(self, monkeypatch):
+        # An 11th preset has no number-row symbol left; it gets no
+        # explicit key (questionary's own auto-assign handles it).
+        state = {"presets": {f"p{i}": {} for i in range(11)}}
+        captured = self._menu_choices(monkeypatch, state)
+        presets = [c for c in captured["choices"] if c.title.startswith("Preset:")]
+        assert len(presets) == 11
+        assert [c.shortcut_key for c in presets[:10]] == list(launch.PRESET_SHORTCUTS)
+        assert presets[10].shortcut_key is None
+        # All explicit shortcut keys are unique across the whole menu.
+        all_keys = [c.shortcut_key for c in captured["choices"] if c.shortcut_key]
+        assert len(all_keys) == len(set(all_keys))
+
     def test_record_only(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -972,7 +1045,7 @@ class TestAskStartMenu:
         state = {"presets": {"night loop": preset}}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -988,7 +1061,7 @@ class TestAskStartMenu:
         state = {"history": [{"vehicle_name": "truck-801", "launch_config": "cfg", "route": ""}]}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -1002,7 +1075,7 @@ class TestAskStartMenu:
 
     def test_start_new_returns_new(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -1014,7 +1087,7 @@ class TestAskStartMenu:
 
     def test_remove_preset_entry(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -1105,7 +1178,7 @@ class TestTruckFetch:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
 
             def ask(_):
@@ -1117,7 +1190,7 @@ class TestTruckFetch:
 
     def test_menu_returns_truck_sentinel(self, monkeypatch):
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 self.choices = choices
 
             def ask(self):
@@ -1374,6 +1447,22 @@ class TestLoopMode:
         assert not state.get("loops")
         assert "at least one stop" in capsys.readouterr().out
 
+    def test_build_loop_full_bucket_refused_up_front(self, monkeypatch, capsys):
+        # MAX_LOOPS loops already saved (Q/W/E/R all taken): refuse a
+        # fifth BEFORE the wizard runs, so no stops get typed for nothing.
+        import state as state_module
+
+        asked = []
+        monkeypatch.setattr(launch, "ask_step", lambda *a: asked.append(a[0]) or "x")
+        state = {
+            "loops": {f"L{i}": {"stops": ["jp_loop"]} for i in range(state_module.MAX_LOOPS)}
+        }
+        lang, outcome = launch.build_loop(state, "en", make_options())
+        assert (lang, outcome) == ("en", None)
+        assert asked == []  # no prompt happened at all
+        assert len(state["loops"]) == state_module.MAX_LOOPS
+        assert "Loops are full" in capsys.readouterr().out
+
     def test_build_loop_drive_now_returns_name(self, monkeypatch):
         self.wizard_steps(monkeypatch)
         self.routes(monkeypatch, ["jp_loop", ""])
@@ -1481,7 +1570,7 @@ class TestLoopMode:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
                 captured["values"] = [c.value for c in choices]
 
@@ -1502,7 +1591,7 @@ class TestLoopMode:
         captured = {}
 
         class FakeSelect:
-            def __init__(self, message, choices=None, default=None):
+            def __init__(self, message, choices=None, default=None, **kwargs):
                 captured["titles"] = [c.title for c in choices]
 
             def ask(_):

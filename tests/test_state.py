@@ -295,3 +295,23 @@ class TestLoops:
 
     def test_load_missing_loop_is_none(self, isolated_state):
         assert load_loop({}, "nope") is None
+
+    def test_fifth_loop_raises_bucket_full(self, isolated_state):
+        # The bucket holds MAX_LOOPS loops (Q/W/E/R on the menu); the
+        # 5th raise so the caller can say why instead of evicting one.
+        state = {}
+        for i in range(state_module.MAX_LOOPS):
+            save_loop(state, f"L{i}", self.VALUES, ["jp_loop"])
+        with pytest.raises(state_module.LoopBucketFull):
+            save_loop(state, "L4", self.VALUES, ["jp_loop"])
+        assert len(state["loops"]) == state_module.MAX_LOOPS
+
+    def test_resaving_an_existing_name_bypasses_the_cap(self, isolated_state):
+        # A full bucket still lets an existing loop be re-saved under its
+        # own name — that's an edit, not a 5th loop.
+        state = {}
+        for i in range(state_module.MAX_LOOPS):
+            save_loop(state, f"L{i}", self.VALUES, ["jp_loop"])
+        assert save_loop(state, "L0", self.VALUES, ["other_loop"]) == "L0"
+        assert len(state["loops"]) == state_module.MAX_LOOPS
+        assert state["loops"]["L0"]["stops"] == ["other_loop"]

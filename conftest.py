@@ -17,6 +17,10 @@ def no_default_brain2_candidates(monkeypatch):
     the synced-from-origin cache clone (see routes_sync.py), so without
     this every load_options() call would try to hit the network. The
     sync unit tests pass an explicit env and a local fake remote instead.
+
+    APP_UPDATE=off does the same for the app's self-update check (see
+    self_update.py) — its tests point at a local fake remote instead.
     """
     monkeypatch.setattr(brain2_routes, "DEFAULT_REPO_CANDIDATES", ())
     monkeypatch.setenv("ROUTES_SYNC", "off")
+    monkeypatch.setenv("APP_UPDATE", "off")

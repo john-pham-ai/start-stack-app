@@ -19,6 +19,22 @@ TRANSLATIONS = {
         "en": "(routes synced from brain2@{commit} on GitHub)",
         "ja": "（ルートは GitHub の brain2@{commit} から同期済み）",
     },
+    "menu_shortcut_hint": {
+        "en": "press a shortcut key, then Enter",
+        "ja": "ショートカットキーを押して Enter",
+    },
+    "loops_full": {
+        "en": "Loops are full (4 max, Q/W/E/R on the menu) — remove one first.",
+        "ja": "ループが満杯です（最大4、メニューでは Q/W/E/R）— 先に1つ削除してください。",
+    },
+    "app_updated": {
+        "en": "(start-stack-app fast-forwarded to {hash} — restart to run the new version)",
+        "ja": "（start-stack-app を {hash} に更新しました — 再起動すると新バージョンになります）",
+    },
+    "app_update_blocked": {
+        "en": "(start-stack-app {hash} is available — commit or stash your local changes to receive it)",
+        "ja": "（start-stack-app の {hash} が利用可能です — ローカルの変更をコミットまたは退避すると受け取れます）",
+    },
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
     "build_command": {"en": "Build command", "ja": "コマンドを作成"},
