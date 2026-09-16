@@ -12,5 +12,11 @@ def no_default_brain2_candidates(monkeypatch):
     would leak real route files into tests that expect "no checkout
     found". Tests that want default-candidate discovery set the tuple
     explicitly (see TestFindBrain2Repo).
+
+    ROUTES_SYNC=off keeps the suite off GitHub: route options default to
+    the synced-from-origin cache clone (see routes_sync.py), so without
+    this every load_options() call would try to hit the network. The
+    sync unit tests pass an explicit env and a local fake remote instead.
     """
     monkeypatch.setattr(brain2_routes, "DEFAULT_REPO_CANDIDATES", ())
+    monkeypatch.setenv("ROUTES_SYNC", "off")

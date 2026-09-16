@@ -5,18 +5,23 @@ from questionary import Choice
 
 import recorder
 import truck
+from routes_sync import synced_commit
 from stack_options import build_command, load_options, map_key_for_route
 from state import (
     CUSTOM_PRESET,
     command_entry_values,
     command_values,
+    delete_loop,
     delete_preset,
     get_history,
+    load_loop,
     load_state,
+    loop_values,
     normalize_custom_command,
     preset_kind,
     remember_command,
     save_custom_preset,
+    save_loop,
     save_preset,
     save_state,
 )
@@ -30,6 +35,9 @@ TRUCK_RUN = object()  # "fetch the latest run id from the truck" on the start me
 TRUCK_SETUP = object()  # "set up SSH for a truck" on the start menu
 SAVE_CUSTOM = object()  # "save a custom command as a preset" on the start menu
 REMOVE_PRESET = object()  # "remove a preset" on the start menu
+DRIVE_LOOP = object()  # "drive a closed-loop mileage route" on the start menu
+BUILD_LOOP = object()  # "build a closed-loop mileage route" on the start menu
+REMOVE_LOOP = object()  # "remove a saved loop" on the start menu
 BACK_TO_MENU = object()  # a pass that should return to the start menu
 
 
@@ -94,7 +102,9 @@ def route_choices_for(options, none_label="-- none --"):
     return choices
 
 
-def ask_route(lang, options, none_label="-- none --"):
+def ask_route(
+    lang, options, none_label="-- none --", message=None, extra_valid=()
+):
     """The route step as a type-to-autofill prompt.
 
     Start typing (a route or map name — both match) and the suggestions
@@ -102,6 +112,12 @@ def ask_route(lang, options, none_label="-- none --"):
     line shows every route. An empty line means no route. The answer
     must resolve to a route — a suggestion title, its value, or its
     label (the same resolution the web combobox does) — or back/quit.
+
+    Callers that reuse the picker for something else can pass their own
+    prompt message and extra typed keywords (lowercased, returned as-is
+    when nothing they would shadow resolves first): the closed-loop stop
+    picker accepts 'done' to finish the route without hunting for the
+    mouse, and says so in its prompt.
     """
     choices = route_choices_for(options, none_label=none_label)
     resolvable = {choice.title: choice.value for choice in choices}
@@ -109,6 +125,7 @@ def ask_route(lang, options, none_label="-- none --"):
     for opt in options["route"]:
         resolvable.setdefault(opt.value, opt.value)
         resolvable.setdefault(opt.label, opt.value)
+    extra = tuple(kw.lower() for kw in extra_valid)
 
     def resolve(text):
         return resolvable.get((text or "").strip())
@@ -119,10 +136,12 @@ def ask_route(lang, options, none_label="-- none --"):
             return True
         if resolve(stripped) is not None:
             return True
+        if stripped.lower() in extra:
+            return True
         return "Pick a route from the suggestions (or leave blank for none)."
 
     answer = questionary.autocomplete(
-        t(lang, "route") + " " + t(lang, "nav_hint"),
+        message if message is not None else t(lang, "route") + " " + t(lang, "nav_hint"),
         choices=[choice.title for choice in choices],
         validate=valid,
         **AUTOCOMPLETE_KWARGS,
@@ -134,7 +153,12 @@ def ask_route(lang, options, none_label="-- none --"):
         return BACK
     if answer.lower() == "quit":
         return QUIT
-    return resolve(answer) or ""
+    resolved = resolve(answer)
+    if resolved is not None:
+        return resolved or ""
+    if answer.lower() in extra:
+        return answer.lower()
+    return resolved or ""
 
 
 def pin_first(opts_list, pinned_values):
@@ -196,12 +220,17 @@ def ask_start_menu(state, lang):
 
     Always shown. Recording-only mode and saving a custom command preset
     are always one pick away; presets and recent commands join the list
-    once they exist. Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM /
-    REMOVE_PRESET / QUIT), a values dict loaded from a values preset or
-    history entry, or a LoadedCommand for a custom command preset.
+    once they exist, and so do the closed-loop mileage entries — driving
+    one pick, building one always available, removing one once any are
+    saved. Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM /
+    REMOVE_PRESET / DRIVE_LOOP / BUILD_LOOP / REMOVE_LOOP / QUIT), a
+    ("loop", name) tuple for a saved loop, a values dict loaded from a
+    values preset or history entry, or a LoadedCommand for a custom
+    command preset.
     """
     presets = state.get("presets", {})
     history = get_history(state, limit=10)
+    loops = state.get("loops", {})
 
     choices = [
         Choice(title=t(lang, "start_new"), value=NEW),
@@ -209,6 +238,7 @@ def ask_start_menu(state, lang):
         Choice(title=t(lang, "truck_run_menu"), value=TRUCK_RUN),
         Choice(title=t(lang, "truck_setup_menu"), value=TRUCK_SETUP),
         Choice(title=t(lang, "save_custom_preset"), value=SAVE_CUSTOM),
+        Choice(title=t(lang, "loop_build_menu"), value=BUILD_LOOP),
     ]
     for name, entry in presets.items():
         title = f"{t(lang, 'preset_label')}: {name}"
@@ -220,12 +250,30 @@ def ask_start_menu(state, lang):
         choices.append(Choice(title=f"{t(lang, 'recent_label')}: {summary}", value=("history", idx)))
     if presets:
         choices.append(Choice(title=t(lang, "remove_preset"), value=REMOVE_PRESET))
+    # Saved loops: drive entries near the top of their own group so a
+    # mileage run is always one pick once the loop exists.
+    for name in loops:
+        title = f"{t(lang, 'loop_menu')} — {name}"
+        choices.append(Choice(title=title, value=("loop", name)))
+    if loops:
+        choices.append(Choice(title=t(lang, "loop_remove_menu"), value=REMOVE_LOOP))
     choices.append(Choice(title=t(lang, "quit"), value=QUIT))
 
     answer = questionary.select(t(lang, "menu_prompt"), choices=choices).ask()
     if answer is None or answer is QUIT:
         return QUIT
-    if answer in (NEW, RECORD_ONLY, TRUCK_RUN, TRUCK_SETUP, SAVE_CUSTOM, REMOVE_PRESET):
+    if answer in (
+        NEW,
+        RECORD_ONLY,
+        TRUCK_RUN,
+        TRUCK_SETUP,
+        SAVE_CUSTOM,
+        REMOVE_PRESET,
+        BUILD_LOOP,
+        REMOVE_LOOP,
+    ):
+        return answer
+    if isinstance(answer, tuple) and answer[0] == "loop":
         return answer
 
     kind, key = answer
@@ -362,6 +410,230 @@ def remove_preset(state, lang):
         return
 
     delete_preset(state, answer)
+    save_state(state)
+    print(t(lang, "preset_removed").format(name=answer) + "\n")
+
+
+# --- closed-loop mileage mode ------------------------------------------------
+#
+# A "closed loop" wraps a base command around an ordered list of stops, each
+# stop a route. Driving it is the same command with the route swapped at each
+# stop; the last stop leads back to the first, so the loop closes and laps
+# accumulate mileage until the tester declares the run done. Every stop
+# command lands on the clipboard and is history-remembered, so a stop
+# behaves exactly like a hand-built command.
+
+
+# Typed keywords that finish stop-adding, so "done" works from the keyboard
+# instead of hunting for the suggestion row. A route named the same wins,
+# because resolution runs first.
+LOOP_DONE_KEYWORD = "done"
+
+
+def add_stops(lang, options, stops=None):
+    """Add stops (routes) in driving order until the tester declares the
+    route done — a blank line, the 'done' keyword, or picking the
+    '-- route done --' row.
+
+    The same route picker as the wizard, repeated, but the prompt says
+    what ends the route so nobody has to guess (typing 'quit' there
+    quits the app, which is why the prompt is explicit). BACK drops the
+    most recent stop, or leaves with nothing when there is none to drop.
+    Returns the stop list (possibly empty), or the QUIT sentinel.
+    """
+    stops = list(stops or [])
+    print(t(lang, "loop_add_stops") + "\n")
+    while True:
+        stop = ask_route(
+            lang,
+            options,
+            none_label=t(lang, "loop_add_done"),
+            message=t(lang, "loop_stop_prompt").format(n=len(stops) + 1),
+            extra_valid=(LOOP_DONE_KEYWORD,),
+        )
+        if stop is QUIT:
+            return QUIT
+        if stop is BACK:
+            if stops:
+                print(f"- {stops.pop()}\n")
+                continue
+            return stops
+        if stop == "" or stop == LOOP_DONE_KEYWORD:
+            # Blank, 'done', or the done row: the tester declares the
+            # whole route done rather than the app guessing.
+            print(t(lang, "loop_route_done").format(n=len(stops)) + "\n")
+            return stops
+        stops.append(stop)
+        print(f"+ {stop}  ({t(lang, 'loop_stop_count').format(n=len(stops))})\n")
+
+
+def build_loop(state, lang, options):
+    """Build a new closed loop: the wizard's base command, then the stops.
+
+    The base is the wizard minus the route step — the stops define the
+    routes — and Japan driving is forced on: this mode is a Japan route
+    setup. Returns (lang, outcome): outcome is the loop's name when the
+    tester wants to drive it right away, None when they don't, and the
+    QUIT / BACK_TO_MENU sentinels to leave (BACK_TO_MENU re-asked the
+    language first, so lang may change — same contract as
+    run_command_flow).
+    """
+    values = {"language": lang}
+    i = 1
+    while i < len(STEPS):
+        step = STEPS[i]
+        if step == "route":  # the stops replace the single-route answer
+            i += 1
+            continue
+        answer = ask_step(step, values, options, state)
+        if answer is BACK:
+            if i == 1:
+                # Backing off the first step re-asks the language, then
+                # it's the start menu again — as the wizard does.
+                new_lang = ask_step("language", values, options, state)
+                if new_lang is QUIT:
+                    print(t(values.get("language", "en"), "cancelled"))
+                    return values["language"], QUIT
+                return new_lang, BACK_TO_MENU
+            i -= 1
+            continue
+        if answer is QUIT:
+            print(t(values.get("language", "en"), "cancelled"))
+            return values["language"], QUIT
+        values[step] = answer
+        i += 1
+    values["enable_japan_driving"] = True
+
+    stops = add_stops(lang, options)
+    if stops is QUIT:
+        return lang, QUIT
+    if not stops:
+        print(t(lang, "loop_no_stops") + "\n")
+        return lang, None
+
+    name = (questionary.text(t(lang, "preset_name_prompt")).ask() or "").strip()
+    if not save_loop(state, name, values, stops):
+        print(t(lang, "loop_no_stops") + "\n")
+        return lang, None
+    save_state(state)
+
+    base = build_command(
+        vehicle_name=values["vehicle_name"],
+        launch_config=values["launch_config"],
+        route="",
+        enable_japan_driving=True,
+    )
+    print(t(lang, "loop_saved") + " " + name + "\n")
+    print(f"$ {base} --route <stop>   ({t(lang, 'loop_stop_count').format(n=len(stops))})\n")
+    for index, stop in enumerate(stops, start=1):
+        print(f"  {index}. {stop}")
+    print("")
+
+    if questionary.confirm(t(lang, "loop_drive_q"), default=False).ask():
+        return lang, name
+    return lang, None
+
+
+def _stop_command(values, stop):
+    """The base command with the route set to this one stop."""
+    return build_command(
+        vehicle_name=values["vehicle_name"],
+        launch_config=values["launch_config"],
+        route=stop,
+        enable_japan_driving=True,
+    )
+
+
+def drive_loop(state, lang, name):
+    """Drive one saved loop: each stop's command in order, then wrap.
+
+    At each stop the command is rebuilt with that stop's route, printed,
+    put on the clipboard and remembered in history — the tester runs it
+    there, then continues. After the last stop the loop closes back to
+    the first and the wrap prompt asks for another lap; the run only ends
+    when the tester says so (or quits), which is the point of a mileage
+    accumulation mode. Ctrl-C at any prompt also ends the drive.
+    """
+    entry = load_loop(state, name)
+    if not entry:
+        print(t(lang, "loop_none_saved") + "\n")
+        return
+    values = loop_values(entry)
+    stops = values["stops"]
+
+    laps = 0
+    while True:  # laps — the tester declares the run done at the wrap prompt
+        laps += 1
+        for index, stop in enumerate(stops, start=1):
+            command = _stop_command(values, stop)
+            print(f"\n=== {t(lang, 'loop_stop_n').format(i=index, n=len(stops))}: {stop} ===")
+            print("\n" + command + "\n")
+            remember_command(
+                state,
+                {
+                    "vehicle_name": values["vehicle_name"],
+                    "launch_config": values["launch_config"],
+                    "route": stop,
+                    "enable_japan_driving": True,
+                },
+                command,
+            )
+            save_state(state)
+            try:
+                pyperclip.copy(command)
+                print(t(lang, "copied_clipboard") + "\n")
+            except pyperclip.PyperclipException:
+                print(t(lang, "could_not_copy") + "\n")
+
+            if index < len(stops):
+                proceed = questionary.confirm(
+                    t(lang, "loop_next_stop").format(next=index + 1), default=True
+                ).ask()
+                if proceed is None or not proceed:
+                    _loop_summary(lang, laps, index, len(stops))
+                    return
+        # The last stop is done: the loop closes back to stop 1.
+        proceed = questionary.confirm(
+            t(lang, "loop_wrap_body").format(lap=laps + 1), default=True
+        ).ask()
+        if proceed is None or not proceed:
+            _loop_summary(lang, laps, len(stops), len(stops))
+            return
+        print(f"\n{t(lang, 'loop_wrap_title')}\n")
+
+
+def _loop_summary(lang, laps, stop_index, stop_count):
+    """The end-of-run line: laps driven, and where the drive stopped."""
+    if stop_index == stop_count:
+        print("\n" + t(lang, "loop_summary").format(laps=laps) + "\n")
+    else:
+        print(
+            "\n"
+            + t(lang, "loop_summary_partial").format(
+                laps=laps, i=stop_index, n=stop_count, full=laps - 1
+            )
+            + "\n"
+        )
+
+
+def remove_loop(state, lang):
+    """Pick one of the saved loops and delete it; back leaves untouched."""
+    names = list(state.get("loops", {}))
+    if not names:
+        return
+
+    choices = [Choice(title=t(lang, "back"), value=BACK)]
+    for name in names:
+        choices.append(Choice(title=name, value=name))
+    answer = questionary.select(t(lang, "loop_remove_which"), choices=choices).ask()
+    if answer is None or answer is BACK:
+        return
+
+    message = t(lang, "confirm_remove_prompt").format(name=answer)
+    if not questionary.confirm(message, default=False).ask():
+        return
+
+    delete_loop(state, answer)
     save_state(state)
     print(t(lang, "preset_removed").format(name=answer) + "\n")
 
@@ -535,6 +807,13 @@ def run_start_menu_session(options, state, lang):
     Returns the language (it can be re-picked by backing out of the
     wizard's first step), and nothing else — the loop only ends on Quit.
     """
+    # One note on where the routes came from, right after the language is
+    # known so it can be said in it (see routes_sync.py: GitHub-synced
+    # cache → local checkout → options.csv). Silence means "not synced"
+    # — offline, disabled, or falling back — the lists still work.
+    commit = synced_commit()
+    if commit:
+        print(t(lang, "routes_synced").format(commit=commit))
     while True:
         menu = ask_start_menu(state, lang)
         if menu is QUIT:
@@ -551,6 +830,19 @@ def run_start_menu_session(options, state, lang):
             continue
         if menu is SAVE_CUSTOM:
             save_custom_command_preset(state, lang)
+            continue
+        if menu is BUILD_LOOP:
+            lang, outcome = build_loop(state, lang, options)
+            if outcome is QUIT:
+                return lang
+            if isinstance(outcome, str):  # the loop's name — drive it now
+                drive_loop(state, lang, outcome)
+            continue  # BACK_TO_MENU or nothing saved — menu either way
+        if menu is REMOVE_LOOP:
+            remove_loop(state, lang)
+            continue
+        if isinstance(menu, tuple) and menu[0] == "loop":
+            drive_loop(state, lang, menu[1])
             continue
         if menu is RECORD_ONLY:
             recorder.run_recording_flow(lang, state)

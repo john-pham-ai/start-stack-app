@@ -101,6 +101,41 @@ class TestLoadOptions:
         options = load_options(csv_path=str(tmp_path / "nope.csv"))
         assert options["vehicle_name"][0].value == "truck-807"  # the default
 
+    def test_synced_cache_takes_precedence_over_local_checkouts(
+        self, csv_file, tmp_path, monkeypatch
+    ):
+        # The GitHub-synced cache (routes_sync) is the primary source; the
+        # local checkout (BRAIN2_REPO_PATH) only stands in when syncing
+        # isn't possible. A different fake repo for each proves which won.
+        cache = make_fake_brain2(tmp_path / "cache")
+        local = tmp_path / "local"
+        local_routes = local / "onroad" / "config" / "constants" / "behavior" / "routes"
+        local_routes.mkdir(parents=True)
+        (local_routes / "only_local.txtpb").write_text(
+            'identifier { map_name: "local_map" route_name: "only_local" }\n'
+        )
+        monkeypatch.setattr(stack_options, "sync_routes", lambda: str(cache))
+        monkeypatch.setattr(stack_options, "find_brain2_repo", lambda: str(local))
+
+        options = load_options(csv_path=csv_file)
+        by_value = {o.value for o in options["route"]}
+        assert "legacy_route" in by_value  # from the synced cache
+        assert "only_local" not in by_value  # the local checkout lost
+        assert "a_loop" not in by_value  # CSV-only rows still disappear
+
+    def test_local_checkout_used_when_sync_unavailable(
+        self, csv_file, tmp_path, monkeypatch
+    ):
+        cache = tmp_path / "cache"
+        local = make_fake_brain2(tmp_path / "local")
+        monkeypatch.setattr(stack_options, "sync_routes", lambda: None)
+        monkeypatch.setattr(stack_options, "find_brain2_repo", lambda: str(local))
+
+        options = load_options(csv_path=csv_file)
+        by_value = {o.value for o in options["route"]}
+        assert "legacy_route" in by_value  # from the local checkout
+        assert "a_loop" not in by_value
+
 
 def make_fake_brain2(root):
     """A minimal brain2 checkout; "main" exists under both maps (ambiguous),

@@ -10,6 +10,7 @@ from launch import (
     NEW,
     QUIT,
     RECORD_ONLY,
+    BUILD_LOOP,
     LoadedCommand,
     ask_route,
     ask_start_menu,
@@ -160,6 +161,41 @@ class TestAskRoute:
         rules = dict(launch.AUTOCOMPLETE_STYLE.style_rules)
         assert "completion-menu" in rules  # the menu itself is restyled
         assert "noreverse" in rules["completion-menu.completion.current selected"]
+
+    def test_extra_valid_keyword_accepted(self, monkeypatch):
+        # The loop stop picker accepts a typed 'done'; resolution runs
+        # first, so a real route named "done" would still win.
+        self.ask_with(monkeypatch, "done")
+        assert ask_route("en", make_options(), extra_valid=("done",)) == "done"
+
+    def test_extra_valid_keyword_case_insensitive(self, monkeypatch):
+        self.ask_with(monkeypatch, "DONE")
+        assert ask_route("en", make_options(), extra_valid=("done",)) == "done"
+
+    def test_extra_keyword_rejected_without_the_parameter(self, monkeypatch):
+        # Validation refuses 'done' when the caller didn't opt in — a
+        # mistyped wizard answer must not silently become a keyword.
+        created = self.ask_with(monkeypatch, "done")
+        ask_route("en", make_options(), extra_valid=("done",))
+        assert created[0].validate("done") is True
+        created = self.ask_with(monkeypatch, "done")
+        ask_route("en", make_options())
+        assert created[0].validate("done") is not True
+
+    def test_extra_keyword_does_not_shadow_a_real_route(self, monkeypatch):
+        # A route whose label is literally "done" resolves first, so the
+        # keyword can never steal it.
+        options = {"route": [Option("done_circuit", "done", "", "")]}
+        self.ask_with(monkeypatch, "done")
+        assert ask_route("en", options, extra_valid=("done",)) == "done_circuit"
+
+    def test_message_override_used_verbatim(self, monkeypatch):
+        created = self.ask_with(monkeypatch, "")
+        ask_route("en", make_options(), message="Stop 1 — pick a route")
+        assert "Stop 1 — pick a route" in created[0].message
+        created = self.ask_with(monkeypatch, "")
+        ask_route("en", make_options())
+        assert "route" in created[0].message.lower()
 
     def test_validate_accepts_known_and_rejects_unknown(self, monkeypatch):
         created = self.ask_with(monkeypatch, "")
@@ -873,6 +909,7 @@ class TestAskStartMenu:
             "Fetch the latest Run ID from the truck",
             "Set up SSH for a truck (one-time per truck)",
             "Save a custom command as a preset",
+            "Build a closed-loop mileage route (Japan)",
             "Quit",
         ]
 
@@ -895,6 +932,7 @@ class TestAskStartMenu:
             "Fetch the latest Run ID from the truck",
             "Set up SSH for a truck (one-time per truck)",
             "Save a custom command as a preset",
+            "Build a closed-loop mileage route (Japan)",
             "Preset: night loop",
             "Recent: t · c",
             "Remove a preset",
@@ -1191,3 +1229,341 @@ class TestTruckFetch:
         )
         launch.run_truck_ssh_setup("en")
         assert "Cancelled." in capsys.readouterr().out
+
+
+# --- closed-loop mileage mode ---------------------------------------------
+
+
+class TestLoopMode:
+    """Build a loop (base command + ordered stops), drive it lap after lap,
+    keep it in its own bucket. All questionary prompts are queued fakes."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_state(self, tmp_path, monkeypatch):
+        import state as state_module
+
+        path = tmp_path / "state.json"
+        monkeypatch.setattr(state_module, "STATE_PATH", str(path))
+        monkeypatch.setenv("BRAIN2_REPO_PATH", "/nonexistent-brain2")
+        return path
+
+    def confirms(self, monkeypatch, answers):
+        """Queue answers for questionary.confirm; past the queue, decline."""
+        queue = list(answers)
+
+        def make(message, default=False):
+            return type("A", (), {"ask": lambda s: queue.pop(0) if queue else False})()
+
+        monkeypatch.setattr(launch.questionary, "confirm", make)
+
+    def texts(self, monkeypatch, answers):
+        queue = list(answers)
+
+        def make(message):
+            return type("A", (), {"ask": lambda s: queue.pop(0) if queue else ""})()
+
+        monkeypatch.setattr(launch.questionary, "text", make)
+
+    def routes(self, monkeypatch, answers):
+        """Queue answers for launch.ask_route (the stop picker)."""
+        queue = list(answers)
+        monkeypatch.setattr(launch, "ask_route", lambda *a, **k: queue.pop(0))
+
+    # -- add_stops ----------------------------------------------------------
+
+    def test_add_stops_until_blank(self, monkeypatch, capsys):
+        self.routes(monkeypatch, ["jp_loop", "shoreline_straight", ""])
+        stops = launch.add_stops("en", make_options())
+        assert stops == ["jp_loop", "shoreline_straight"]
+        out = capsys.readouterr().out
+        assert "+ jp_loop" in out and "+ shoreline_straight" in out
+
+    def test_add_stops_done_keyword_finishes(self, monkeypatch, capsys):
+        # Typing 'done' finishes the route — the fix for quitting the app
+        # because the prompt never said how to end.
+        self.routes(monkeypatch, ["jp_loop", "shoreline_straight", launch.LOOP_DONE_KEYWORD])
+        stops = launch.add_stops("en", make_options())
+        assert stops == ["jp_loop", "shoreline_straight"]
+        out = capsys.readouterr().out
+        assert "Route done — 2 stop(s)" in out
+
+    def test_add_stops_finished_print_says_how_many(self, monkeypatch, capsys):
+        self.routes(monkeypatch, ["jp_loop", ""])
+        launch.add_stops("en", make_options())
+        assert "Route done — 1 stop(s)" in capsys.readouterr().out
+
+    def test_add_stops_none_choice_finishes(self, monkeypatch):
+        # The picker's top row is the "route done" label; picking it (the
+        # empty value) is the same as a blank line.
+        self.routes(monkeypatch, ["jp_loop", ""])
+        assert launch.add_stops("en", make_options()) == ["jp_loop"]
+
+    def test_add_stops_back_drops_last_stop(self, monkeypatch, capsys):
+        self.routes(monkeypatch, ["jp_loop", "shoreline_straight", BACK, ""])
+        stops = launch.add_stops("en", make_options())
+        assert stops == ["jp_loop"]
+        assert "- shoreline_straight" in capsys.readouterr().out
+
+    def test_add_stops_quit(self, monkeypatch):
+        self.routes(monkeypatch, ["jp_loop", QUIT])
+        assert launch.add_stops("en", make_options()) is QUIT
+
+    def test_add_stops_empty_when_first_blank(self, monkeypatch):
+        self.routes(monkeypatch, [""])
+        assert launch.add_stops("en", make_options()) == []
+
+    # -- build_loop ----------------------------------------------------------
+
+    def wizard_steps(self, monkeypatch, answers=None):
+        """Fake the wizard steps: vehicle, launch_config, japan toggle."""
+        answers = answers or {}
+
+        def fake_ask_step(step, values, options, state):
+            return answers.get(step, {"vehicle_name": "truck-812"}.get(step, False))
+
+        monkeypatch.setattr(launch, "ask_step", fake_ask_step)
+
+    def test_build_loop_skips_route_and_forces_japan(self, monkeypatch, capsys):
+        import state as state_module
+
+        self.wizard_steps(monkeypatch)
+        self.routes(monkeypatch, ["jp_loop", "shoreline_straight", ""])
+        self.texts(monkeypatch, ["jp night"])
+        self.confirms(monkeypatch, [False])  # drive now? no
+        state = {}
+
+        lang, outcome = launch.build_loop(state, "en", make_options())
+
+        assert outcome is None  # saved, not driven
+        entry = state["loops"]["jp night"]
+        assert entry["stops"] == ["jp_loop", "shoreline_straight"]
+        assert entry["vehicle_name"] == "truck-812"
+        # Japan driving is forced on — the mode is a Japan route setup —
+        # whatever the wizard answered for the toggle.
+        assert entry["enable_japan_driving"] is True
+        # No route answer anywhere: the stops replace it.
+        assert "route" not in entry
+        # Saved to disk too.
+        with open(state_module.STATE_PATH) as f:
+            assert "jp night" in f.read()
+        out = capsys.readouterr().out
+        assert "jp night" in out
+
+    def test_build_loop_route_step_never_asked(self, monkeypatch):
+        asked = []
+        self.wizard_steps(monkeypatch, {})
+        self.routes(monkeypatch, ["jp_loop", ""])
+        self.texts(monkeypatch, ["x"])
+        self.confirms(monkeypatch, [False])
+        real_ask_step = launch.ask_step
+
+        def spy(step, values, options, state):
+            asked.append(step)
+            return real_ask_step(step, values, options, state)
+
+        monkeypatch.setattr(launch, "ask_step", spy)
+        launch.build_loop({}, "en", make_options())
+        assert "route" not in asked
+
+    def test_build_loop_no_stops_saves_nothing(self, monkeypatch, capsys):
+        self.wizard_steps(monkeypatch)
+        self.routes(monkeypatch, [""])  # declared done with zero stops
+        state = {}
+        lang, outcome = launch.build_loop(state, "en", make_options())
+        assert outcome is None
+        assert not state.get("loops")
+        assert "at least one stop" in capsys.readouterr().out
+
+    def test_build_loop_drive_now_returns_name(self, monkeypatch):
+        self.wizard_steps(monkeypatch)
+        self.routes(monkeypatch, ["jp_loop", ""])
+        self.texts(monkeypatch, ["jp night"])
+        self.confirms(monkeypatch, [True])  # drive now? yes
+        state = {}
+        lang, outcome = launch.build_loop(state, "en", make_options())
+        assert outcome == "jp night"
+
+    def test_build_loop_quit_propagates(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            launch, "ask_step", lambda *a: QUIT
+        )
+        lang, outcome = launch.build_loop({}, "en", make_options())
+        assert outcome is QUIT
+        assert "Cancelled." in capsys.readouterr().out
+
+    # -- drive_loop ----------------------------------------------------------
+
+    def saved_loop_state(self):
+        from state import save_loop
+
+        state = {}
+        save_loop(
+            state,
+            "jp night",
+            {"vehicle_name": "truck-812", "launch_config": "etc_sds_road_readiness"},
+            ["jp_loop", "shoreline_straight"],
+        )
+        return state
+
+    def test_drive_loop_runs_every_stop_then_wraps(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        copied = []
+        monkeypatch.setattr(launch.pyperclip, "copy", copied.append)
+        # stop1->stop2 yes, wrap to lap2 yes, lap2 stop1->stop2 yes, wrap no.
+        self.confirms(monkeypatch, [True, True, True, False])
+
+        launch.drive_loop(state, "en", "jp night")
+
+        out = capsys.readouterr().out
+        # Two laps x two stops: every stop command printed, route swapped.
+        assert out.count("--route jp_loop") == 2
+        assert out.count("--route shoreline_straight") == 2
+        assert out.count("--enable_japan_driving") == 4
+        assert out.count("Lap complete!") == 1  # the wrap banner (lap 2)
+        assert "Full laps driven: 2" in out
+        # Each stop's command was copied and remembered.
+        assert len(copied) == 4
+        routes_in_history = [e["route"] for e in state["history"]]
+        assert routes_in_history[:4] == [
+            "shoreline_straight",
+            "jp_loop",
+            "shoreline_straight",
+            "jp_loop",
+        ]
+
+    def test_drive_loop_mid_lap_exit_partial_summary(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        self.confirms(monkeypatch, [False])  # "ready for stop 2?" — no
+
+        launch.drive_loop(state, "en", "jp night")
+
+        out = capsys.readouterr().out
+        assert out.count("--route jp_loop") == 1
+        assert out.count("--route shoreline_straight") == 0
+        assert "stop 1 of 2" in out
+        assert "full laps driven: 0" in out
+
+    def test_drive_loop_ctrl_c_at_wrap_ends(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        queue = [True, None]  # on to stop 2, then Ctrl-C at the wrap prompt
+
+        def make(message, default=False):
+            return type("A", (), {"ask": lambda s: queue.pop(0) if queue else False})()
+
+        monkeypatch.setattr(launch.questionary, "confirm", make)
+
+        launch.drive_loop(state, "en", "jp night")
+        out = capsys.readouterr().out
+        assert "Full laps driven: 1" in out
+
+    def test_drive_loop_single_stop_wraps_without_stop_prompts(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        from state import save_loop
+
+        save_loop(state, "one stop", {"vehicle_name": "truck-812", "launch_config": "c"}, ["jp_loop"])
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        self.confirms(monkeypatch, [False])  # wrap? no after lap 1
+
+        launch.drive_loop(state, "en", "one stop")
+        out = capsys.readouterr().out
+        assert out.count("--route jp_loop") == 1
+        assert "Full laps driven: 1" in out
+
+    def test_drive_loop_unknown_name(self, monkeypatch, capsys):
+        launch.drive_loop({}, "en", "missing")
+        assert "No loops saved yet" in capsys.readouterr().out
+
+    # -- menu + session -------------------------------------------------------
+
+    def test_menu_always_lists_build_and_loops_when_saved(self, monkeypatch):
+        captured = {}
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None):
+                captured["titles"] = [c.title for c in choices]
+                captured["values"] = [c.value for c in choices]
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        state = self.saved_loop_state()
+        ask_start_menu(state, "en")
+        titles, values = captured["titles"], captured["values"]
+        # Build is always there; the saved loop and remove appear too.
+        assert "Build a closed-loop mileage route (Japan)" in titles
+        assert "Drive a closed-loop mileage route (Japan) — jp night" in titles
+        assert ("loop", "jp night") in values
+        assert "Remove a saved loop" in titles
+
+    def test_menu_without_loops_no_remove_entry(self, monkeypatch):
+        captured = {}
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None):
+                captured["titles"] = [c.title for c in choices]
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        ask_start_menu({}, "en")
+        assert "Remove a saved loop" not in captured["titles"]
+
+    def test_session_dispatches_saved_loop_to_drive(self, monkeypatch):
+        driven = []
+        monkeypatch.setattr(launch, "ask_start_menu", lambda s, lang: ("loop", "jp night"))
+        menu_returns = [("loop", "jp night"), QUIT]
+        monkeypatch.setattr(
+            launch, "ask_start_menu", lambda s, lang: menu_returns.pop(0)
+        )
+        monkeypatch.setattr(launch, "drive_loop", lambda s, lang, name: driven.append(name))
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        launch.main()
+        assert driven == ["jp night"]
+
+    def test_session_builds_then_drives_when_drive_now(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        built = []
+
+        def fake_build(s, lang, options):
+            built.append(lang)
+            return lang, "jp night"
+
+        driven = []
+        monkeypatch.setattr(launch, "build_loop", fake_build)
+        monkeypatch.setattr(launch, "drive_loop", lambda s, lang, name: driven.append(name))
+        menu_returns = [BUILD_LOOP, QUIT]
+        monkeypatch.setattr(
+            launch, "ask_start_menu", lambda s, lang: menu_returns.pop(0)
+        )
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type("P", (), {"ask": lambda s: "en"})(),
+        )
+        launch.main()
+        assert built == ["en"]
+        assert driven == ["jp night"]
+
+    def test_remove_loop_flow(self, monkeypatch, capsys):
+        state = self.saved_loop_state()
+        monkeypatch.setattr(
+            launch.questionary,
+            "select",
+            lambda message, choices=None, default=None: type(
+                "P", (), {"ask": lambda s: next(
+                    c.value for c in choices if c.value == "jp night"
+                )}
+            )(),
+        )
+        self.confirms(monkeypatch, [True])
+        launch.remove_loop(state, "en")
+        assert state["loops"] == {}
+        assert "Preset removed: jp night" in capsys.readouterr().out

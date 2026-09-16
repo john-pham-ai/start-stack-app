@@ -100,6 +100,14 @@ The Polarion link is built from a URL template in `recorder.py` (`POLARION_URL_T
 
 If you just want to capture a recording without building a `start_stack` command first, pick **Record the screen only** on the wizard's first menu — or run `./recorder.sh` (or type `recorder` once the alias is set up). Both go straight to the same `r` to start / `s` to stop / keep-or-discard / naming flow described above, in your chosen language for the wizard route — the video just won't have a vehicle name in its filename. They share the same remembered `skip`/last-test-case-id state as the full wizard.
 
+## Closed-loop mileage mode (Japan)
+
+For mileage accumulation on the Japan routes: **Build a closed-loop mileage route (Japan)** on the main menu asks for the base command (vehicle, launch config — Japan driving is forced on for this mode, no route is asked at this point), then each **stop** in driving order using the same route picker as the wizard. A blank line, the typed word `done`, or picking the `-- route done --` row declares the whole route done (the prompt at each stop says so); `back` removes the last stop. Name it, and it's saved in its own `loops` bucket (a loop and a preset can share a name without colliding).
+
+Driving it — pick the loop from the menu, or answer yes to "Drive this loop now?" right after building — prints each stop's command in order, **puts it on your clipboard**, and remembers it in history like any hand-built command: you run it when you reach that stop, then continue. After the last stop the loop closes back to the first and asks whether to start another lap; the run only ends when you say so (or press Ctrl-C at any prompt), which is the point of a mileage loop. Ending it prints the laps fully driven — and, if you stopped mid-lap, the stop you stopped at.
+
+Saved loops appear on the main menu as **Drive a closed-loop mileage route (Japan) — <name>**, one pick to run any lap cycle again another day; **Remove a saved loop** deletes one. Removing and quitting behave like their preset equivalents.
+
 ## Fetch the latest Run ID from the truck
 
 With the laptop cabled to a test truck, any of the interfaces can grab the newest run id straight off the truck's log disk:
@@ -137,13 +145,23 @@ Afterwards, fetches for that vehicle SSH to `truck-805` instead of the raw addre
 | `TRUCK_KEYGEN_BIN` | `ssh-keygen` | ssh-keygen binary for the per-truck setup (test hook) |
 | `TRUCK_SSH_DIR` | `~/.ssh` | Directory holding identities/config/known_hosts.d (test hook) |
 
+The routes sync (see [Where the options come from](#where-the-options-come-from)) has its own knobs:
+
+| env var | default | purpose |
+| --- | --- | --- |
+| `ROUTES_SYNC` | on | set `off` (or `0`/`false`/`no`) to skip the GitHub fetch and use only the local brain2 checkout |
+| `ROUTES_REMOTE_URL` | `https://github.com/Ext-Applied-Frontier/brain2` | the repo the routes-only cache clone fetches from |
+| `ROUTES_BRANCH` | `master` | the branch it fetches |
+| `ROUTES_CACHE_DIR` | `~/.cache/start-stack-app/routes` | where the cache clone lives (delete it to force a fresh clone) |
+
 `python3 truck.py [vehicle] [--json]` is the underlying fetch CLI, `python3 truck.py setup <vehicle> [--json]` the setup CLI — `--json` prints machine-readable output (errors included, with exit code 1). `truck.py` is pure stdlib, so it runs without the venv.
 
 ## Where the options come from
 
 - **Vehicles and launch configs** always come from `options.csv` (see [Editing the options](#editing-the-options) below).
-- **Routes** are scanned live from a brain2 checkout when one is available: every `onroad/config/constants/behavior/routes/**/*.txtpb` file (recursively, so route files for every map are picked up however they're organized) is read for its `identifier { map_name, route_name }` pairs, so the list can never go stale against brain2. Each route carries its map for grouping in the UI. Point the tool at your checkout with the `BRAIN2_REPO_PATH` env var (defaults to trying `~/brain2` and `~/Projects/brain2`).
-- When no checkout is found, the tool **falls back to the `route` rows in `options.csv`** instead of failing — that's the CSV's fallback role.
+- **Routes come from the brain2 repo on GitHub, automatically.** On launch, the tool keeps a tiny self-updating copy of just the routes directory — a blobless, sparse, shallow clone of `origin/master`'s `onroad/config/constants/behavior/routes` in `~/.cache/start-stack-app/routes` — refreshed on run (never more than once a minute, so the web UI stays snappy). The route list is then always the repo's latest, with no `git pull` and no edits to this tool. The TUI says where its routes came from: `(routes synced from brain2@<hash> on GitHub)` right after the language pick.
+- **Fallback:** when the sync isn't possible (offline, no `git`, or `ROUTES_SYNC=off`), a local brain2 checkout is scanned instead: every `onroad/config/constants/behavior/routes/**/*.txtpb` file (recursively, so route files for every map are picked up however they're organized) is read for its `identifier { map_name, route_name }` pairs. Point the tool at your checkout with the `BRAIN2_REPO_PATH` env var (defaults to trying `~/brain2` and `~/Projects/brain2`). A previously-synced cache that can't refresh right now still gets used — stale remote data beats none.
+- When neither is available, the tool **falls back to the `route` rows in `options.csv`** instead of failing — that's the CSV's fallback role.
 - Either way, the CSV's route rows still contribute their `nickname` column to any live-scanned route they match, so curated labels ("Shoreline Terminal - Slow") survive the merge.
 
 ## Editing the options

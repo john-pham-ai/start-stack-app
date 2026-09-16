@@ -5,6 +5,9 @@ import pytest
 import state as state_module
 from state import (
     MAX_HISTORY_ENTRIES,
+    delete_loop,
+    load_loop,
+    save_loop,
     command_entry_values,
     command_values,
     delete_preset,
@@ -236,3 +239,59 @@ class TestCommandValues:
     def test_coerces_japan_driving_to_bool(self):
         assert command_values({"enable_japan_driving": "yes"})["enable_japan_driving"] is True
         assert command_values({"enable_japan_driving": ""})["enable_japan_driving"] is False
+
+
+# --- closed-loop mileage mode --------------------------------------------
+
+
+class TestLoops:
+    VALUES = {
+        "vehicle_name": "truck-812",
+        "launch_config": "etc_sds_road_readiness",
+        "route": "",
+        "enable_japan_driving": False,  # save_loop must force this on
+    }
+
+    def test_save_loop_forces_japan_driving_and_keeps_stops(self, isolated_state):
+        state = {}
+        assert save_loop(state, "jp night", self.VALUES, ["jp_loop", "shoreline_straight"]) == "jp night"
+        entry = state["loops"]["jp night"]
+        assert entry["enable_japan_driving"] is True
+        assert entry["stops"] == ["jp_loop", "shoreline_straight"]
+        assert entry["vehicle_name"] == "truck-812"
+
+    def test_save_loop_rejects_blank_name_and_empty_stops(self, isolated_state):
+        state = {}
+        assert save_loop(state, "  ", self.VALUES, ["jp_loop"]) is None
+        assert save_loop(state, "x", self.VALUES, []) is None
+        assert save_loop(state, "x", self.VALUES, ["", "  "]) is None
+        assert "loops" not in state or state["loops"] == {}
+
+    def test_loops_live_apart_from_presets(self, isolated_state):
+        state = {}
+        save_loop(state, "jp night", self.VALUES, ["jp_loop"])
+        save_preset(state, "jp night", self.VALUES)  # same name, other bucket
+        assert load_loop(state, "jp night")["stops"] == ["jp_loop"]
+        assert "stops" not in load_preset(state, "jp night")  # untouched bucket
+        assert preset_kind(load_preset(state, "jp night")) == state_module.VALUES_PRESET
+
+    def test_loop_values_drops_blanks_and_forces_japan(self, isolated_state):
+        entry = {"vehicle_name": "t", "launch_config": "c", "enable_japan_driving": False,
+                 "stops": ["a", "", "b", None]}
+        values = state_module.loop_values(entry)
+        assert values["enable_japan_driving"] is True
+        assert values["stops"] == ["a", "b"]
+
+    def test_loop_values_on_garbage(self, isolated_state):
+        assert state_module.loop_values(None)["stops"] == []
+        assert state_module.loop_values("junk")["stops"] == []
+
+    def test_delete_loop(self, isolated_state):
+        state = {}
+        save_loop(state, "jp night", self.VALUES, ["jp_loop"])
+        assert delete_loop(state, "jp night") is True
+        assert delete_loop(state, "jp night") is False
+        assert state["loops"] == {}
+
+    def test_load_missing_loop_is_none(self, isolated_state):
+        assert load_loop({}, "nope") is None

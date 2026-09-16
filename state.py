@@ -150,3 +150,59 @@ def save_custom_preset(state, name, command):
 def get_history(state, limit=None):
     history = state.get("history", [])
     return history[:limit] if limit is not None else history
+
+
+# --- closed-loop mileage runs -------------------------------------------------
+#
+# A loop is one base command (vehicle, launch config, Japan driving on) driven
+# over an ordered list of stops, each stop a route. Driving it means issuing
+# the same command with the route swapped per stop, wrapping from the last
+# stop back to the first for another lap — the "closed" part — until the
+# tester declares the run done. Loops live in their own bucket so they never
+# collide with values/custom presets in the menu or on disk.
+
+
+def loop_values(entry):
+    """The base-command fields of a saved loop, with its stops.
+
+    Japan driving is always on for a loop (the mode is a Japan route setup),
+    regardless of what a hand-edited state file says; stops are the routes
+    in driving order, with blanks dropped.
+    """
+    entry = entry if isinstance(entry, dict) else {}
+    stops = [route for route in ((route or "").strip() for route in entry.get("stops", [])) if route]
+    return {
+        "vehicle_name": entry.get("vehicle_name", ""),
+        "launch_config": entry.get("launch_config", ""),
+        "enable_japan_driving": True,
+        "stops": stops,
+    }
+
+
+def save_loop(state, name, values, stops):
+    """Save a closed loop under a name. Returns the name, or None if the
+    name is blank or there are no stops to drive."""
+    name = (name or "").strip()
+    stops = [route for route in ((route or "").strip() for route in (stops or [])) if route]
+    if not name or not stops:
+        return None
+    state.setdefault("loops", {})[name] = {
+        "vehicle_name": values.get("vehicle_name", ""),
+        "launch_config": values.get("launch_config", ""),
+        "enable_japan_driving": True,
+        "stops": stops,
+    }
+    return name
+
+
+def load_loop(state, name):
+    return state.get("loops", {}).get(name)
+
+
+def delete_loop(state, name):
+    """Remove a saved loop by name. Returns True if it existed."""
+    loops = state.get("loops", {})
+    if name in loops:
+        del loops[name]
+        return True
+    return False

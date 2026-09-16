@@ -2,7 +2,8 @@ import csv
 import os
 from collections import namedtuple
 
-from brain2_routes import Brain2RoutesError, load_route_options
+from brain2_routes import Brain2RoutesError, find_brain2_repo, load_route_options
+from routes_sync import sync_routes
 
 CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "options.csv")
 
@@ -19,13 +20,16 @@ FIELDS = ["vehicle_name", "launch_config", "route"]
 
 def load_options(csv_path=CSV_PATH):
     """Load vehicle/config options from options.csv, and route options live
-    from a brain2 checkout when one is available (falling back to the CSV's
-    route rows when it isn't).
+    from brain2 when it's reachable (falling back to the CSV's route rows
+    when it isn't).
 
-    The CSV's route rows do double duty: they're the fallback source when
-    brain2 is missing, and they carry nicknames ("Shoreline Terminal -
-    Slow") that get overlaid onto any matching live-scanned routes so
-    curated labels survive the merge.
+    Routes come from the brain2 repo on GitHub via a self-updating
+    routes-only cache clone (see routes_sync.py); when that isn't
+    possible (offline, ROUTES_SYNC=off, no git), a local brain2
+    checkout is scanned instead. The CSV's route rows do double duty:
+    they're the last-resort source, and they carry nicknames ("Shoreline
+    Terminal - Slow") that get overlaid onto any matching live-scanned
+    routes so curated labels survive the merge.
     """
     options = {field: [] for field in FIELDS}
     if os.path.exists(csv_path):
@@ -40,13 +44,28 @@ def load_options(csv_path=CSV_PATH):
         if not options[field]:
             options[field] = DEFAULT_OPTIONS[field]
 
-    try:
-        live_routes = load_route_options()
-    except Brain2RoutesError:
-        pass  # no usable brain2 checkout — keep the CSV-derived options
-    else:
+    live_routes = _live_route_options()
+    if live_routes is not None:
         options["route"] = _overlay(options["route"], live_routes)
     return options
+
+
+def _live_route_options():
+    """Route options straight from brain2, or None to keep the CSV's.
+
+    Precedence: the routes-only cache synced from brain2's GitHub repo
+    (always current with origin/master) → a local brain2 checkout
+    (however fresh its last git pull was). Neither being usable means
+    no brain2 at all — the CSV's route rows then stand in.
+    """
+    for repo_path in (sync_routes(), find_brain2_repo()):
+        if not repo_path:
+            continue
+        try:
+            return load_route_options(repo_path)
+        except Brain2RoutesError:
+            continue
+    return None
 
 
 def _overlay(csv_options, live_options):

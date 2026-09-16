@@ -15,6 +15,10 @@ TRANSLATIONS = {
         "en": "Type to filter — click for the full list",
         "ja": "入力して絞り込み — クリックで全一覧",
     },
+    "routes_synced": {
+        "en": "(routes synced from brain2@{commit} on GitHub)",
+        "ja": "（ルートは GitHub の brain2@{commit} から同期済み）",
+    },
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
     "build_command": {"en": "Build command", "ja": "コマンドを作成"},
@@ -132,6 +136,61 @@ TRANSLATIONS = {
     },
     "custom_command_label": {"en": "Custom command", "ja": "カスタムコマンド"},
     "custom_tag": {"en": "(custom)", "ja": "（カスタム）"},
+    "loop_tag": {"en": "(loop)", "ja": "（ループ）"},
+    "loop_menu": {
+        "en": "Drive a closed-loop mileage route (Japan)",
+        "ja": "クローズドループ走行・マイルージュ蓄積（日本）",
+    },
+    "loop_build_menu": {
+        "en": "Build a closed-loop mileage route (Japan)",
+        "ja": "クローズドループ走行ルートを作成（日本）",
+    },
+    "loop_remove_menu": {
+        "en": "Remove a saved loop",
+        "ja": "保存したループを削除",
+    },
+    "loop_remove_which": {
+        "en": "Which loop should be removed?",
+        "ja": "どのループを削除しますか？",
+    },
+    "loop_which": {"en": "Which loop do you want to drive?", "ja": "どのループを走行しますか？"},
+    "loop_none_saved": {"en": "No loops saved yet — build one from the main menu first.", "ja": "保存されたループはまだありません。メインメニューから作成してください。"},
+    "loop_drive_q": {"en": "Drive this loop now?", "ja": "このループを今すぐ走行しますか？"},
+    "loop_drive_how": {
+        "en": "At each stop, run the command shown (it's on your clipboard), drive the route, then continue.",
+        "ja": "各停留所で表示されたコマンドを実行し（クリップボードにコピー済み）、ルートを走行してから続行してください。",
+    },
+    "loop_stop_n": {"en": "Stop {i} of {n}", "ja": "停留所 {i} / {n}"},
+    "loop_next_stop": {"en": "Ready for stop {next}?", "ja": "停留所 {next} に進みますか？"},
+    "loop_wrap_title": {"en": "Lap complete!", "ja": "周回が完了しました！"},
+    "loop_wrap_body": {
+        "en": "You're back at the start. Continue with lap {lap}?",
+        "ja": "スタートに戻りました。第 {lap} 周を続けますか？",
+    },
+    "loop_saved": {"en": "Closed loop saved:", "ja": "クローズドループを保存しました："},
+    "loop_summary": {
+        "en": "Loop complete — great run! Full laps driven: {laps}.",
+        "ja": "ループ完了 — お疲れ様でした！完走した周回数：{laps}。",
+    },
+    "loop_summary_partial": {
+        "en": "Drive ended at lap {laps}, stop {i} of {n} — full laps driven: {full}.",
+        "ja": "第 {laps} 周の停留所 {i}/{n} で終了しました — 完走した周回数：{full}。",
+    },
+    "loop_no_stops": {"en": "A loop needs at least one stop — nothing saved.", "ja": "ループには最低1つの停留所が必要です — 保存されません。"},
+    "loop_add_stops": {
+        "en": "Add each stop (route) in driving order. When the whole route is in, finish with an EMPTY LINE (or type 'done'). Type 'back' to remove the last stop; 'quit' only quits the whole app.",
+        "ja": "各停留所（ルート）を走行順に追加してください。ルート全体の入力が終わったら 空行（または done と入力）で確定します。back で直前の停留所を削除、quit はアプリ全体の終了である点に注意してください。",
+    },
+    "loop_add_done": {"en": "-- route done --", "ja": "-- ルート完了 --"},
+    "loop_stop_prompt": {
+        "en": "Stop {n} (route) — blank line or 'done' finishes the route; 'back' removes the last stop",
+        "ja": "停留所 {n}（ルート）— 空行または done でルート完了、back で直前の停留所を削除",
+    },
+    "loop_route_done": {
+        "en": "Route done — {n} stop(s) in the loop.",
+        "ja": "ルート完了 — ループに {n} 件の停留所があります。",
+    },
+    "loop_stop_count": {"en": "{n} stop(s)", "ja": "停留所 {n} 件"},
     "load_preset": {"en": "Load", "ja": "読み込む"},
     "invalid_option_note": {
         "en": "(dropped saved values that no longer exist: {})",
