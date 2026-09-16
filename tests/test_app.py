@@ -84,6 +84,31 @@ class TestWebUI:
         assert "--route shoreline_straight" in page
         assert "--map_key" not in page  # never emitted
 
+    def test_page_javascript_parses(self, client):
+        """PAGE is a Python string, so a stray "\\n" or "\\t" escape inside
+        the inline JS silently becomes a real newline/tab and kills the
+        whole script (the combobox once shipped broken exactly this way).
+        Parse the served <script> with node when it's available."""
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            pytest.skip("node not installed")
+        page = client.get("/").get_data(as_text=True)
+        js = page[page.index("<script>") + len("<script>"):page.rindex("</script>")]
+        result = subprocess.run(
+            ["node", "--check", "--input-type=module", "-"],
+            input=js, capture_output=True, text=True,
+        )
+        # `--check` refuses stdin; fall back to a temp file when it does.
+        if result.returncode and "check" in (result.stderr or "").lower():
+            import tempfile
+
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write(js)
+            result = subprocess.run(["node", "--check", f.name], capture_output=True, text=True)
+        assert result.returncode == 0, result.stderr
+
     def test_route_combobox_rendered(self, client):
         page = client.get("/").get_data(as_text=True)
         # The route picker is a combobox: search input + hidden value field...

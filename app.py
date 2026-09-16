@@ -196,7 +196,9 @@ PAGE = """
     function matches(route, text) {
       if (!text) return true;
       text = text.toLowerCase();
-      return (route.l + "\n" + route.v + "\n" + route.o).toLowerCase().indexOf(text) !== -1;
+      // (PAGE is a Python string: never use backslash escapes in this JS —
+      // they get interpreted by Python and break the script.)
+      return (route.l + " | " + route.v + " | " + route.o).toLowerCase().indexOf(text) !== -1;
     }
 
     function close() {
