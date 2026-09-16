@@ -3,7 +3,24 @@ import os
 import re
 from datetime import datetime
 
-STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")
+
+def _default_state_path():
+    """Where the presets/history state file lives.
+
+    On an Apps Platform (Cloud Run) deployment the container filesystem is
+    ephemeral — state would vanish on every redeploy — so when the
+    platform's persistent Filestore mount (/mnt/data) is there, the state
+    moves onto it (K_SERVICE is how Cloud Run identifies itself; it's
+    unset on laptops and in tests). Everywhere else the file stays next
+    to the tool, exactly as before, and the TUI and web UI keep sharing
+    one file per machine.
+    """
+    if os.environ.get("K_SERVICE") and os.path.isdir("/mnt/data"):
+        return os.path.join("/mnt/data", "start-stack", ".launch_state.json")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")
+
+
+STATE_PATH = _default_state_path()
 
 # How many recently built commands to remember (newest first).
 MAX_HISTORY_ENTRIES = 20
@@ -32,6 +49,9 @@ def load_state(path=None):
 
 def save_state(state, path=None):
     path = path or STATE_PATH
+    parent = os.path.dirname(path)
+    if parent:  # /mnt/data/start-stack may not exist on a fresh mount
+        os.makedirs(parent, exist_ok=True)
     with open(path, "w") as f:
         json.dump(state, f, indent=2)
 

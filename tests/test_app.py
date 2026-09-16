@@ -1,10 +1,20 @@
+import io
 import json
+import os
 
 import pytest
 
+import shared_presets
 import state as state_module
 from app import app, normalize_route, normalize_vehicle_name
 from stack_options import Option
+
+SHARED_VALUES = {
+    "vehicle_name": "truck-807",
+    "launch_config": "sds_road_readiness",
+    "route": "shoreline_straight",
+    "enable_japan_driving": False,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -383,6 +393,152 @@ class TestWebUI:
             },
         ).get_data(as_text=True)
         assert "--enable_japan_driving" in page
+
+
+class TestAppsPlatform:
+    """The packaging the Apps Platform deploys: health probe + guards."""
+
+    def test_health_endpoint(self, client):
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        assert response.get_json() == {"status": "healthy"}
+
+    def test_gunicorn_pinned_and_procfile_bind(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        requirements = (open(os.path.join(root, "requirements.txt")).read())
+        assert "gunicorn" in requirements
+        procfile = open(os.path.join(root, "Procfile")).read()
+        # Binds the platform's PORT on all interfaces, like the deployed form.
+        assert "0.0.0.0:$PORT" in procfile
+        assert "app:app" in procfile
+
+    def test_image_excludes_developer_only_files(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ignored = open(os.path.join(root, ".gcloudignore")).read()
+        for junk in ("venv/", "tests/", ".git", ".launch_state.json"):
+            assert junk in ignored
+        # ...but the shared presets ship with the image.
+        assert "presets/" not in ignored
+
+    def test_project_toml_declares_the_platform_bits(self):
+        import tomllib
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "project.toml"), "rb") as f:
+            config = tomllib.load(f)
+        assert config["name"] == "start-stack-app"
+        # State must survive redeploys (presets!) — hence the Filestore.
+        assert config["enable_filestore"] is True
+        assert config["metadata"]["owner"] == "john.pham@applied.co"
+
+
+class TestSharedPresets:
+    """The repo's presets/: listed, loadable, exportable, importable."""
+
+    @pytest.fixture
+    def shared_dir(self, tmp_path, monkeypatch):
+        presets_dir = tmp_path / "presets"
+        presets_dir.mkdir()
+        (presets_dir / "repo route.json").write_text(json.dumps(SHARED_VALUES))
+        monkeypatch.setattr(shared_presets, "PRESETS_DIR", str(presets_dir))
+        return presets_dir
+
+    def test_shared_in_dropdown_with_tag(self, client, shared_dir):
+        page = client.get("/").get_data(as_text=True)
+        assert "repo route (shared)" in page
+        # The Export button rides the preset form now.
+        assert 'value="export_preset"' in page
+
+    def test_loading_shared_builds_its_command(self, client, shared_dir, isolated_state):
+        page = client.post(
+            "/",
+            data={"lang": "en", "action": "load_preset", "preset_name": "repo route"},
+        ).get_data(as_text=True)
+        assert "--route shoreline_straight" in page
+        # And the use is remembered like any preset load.
+        state = json.loads(isolated_state.read_text())
+        assert state["history"][0]["command"].startswith("start_stack")
+
+    def test_personal_copy_shadows_the_shared_name(self, client, shared_dir, isolated_state):
+        # Saving a personal preset under a shared name keeps both: the
+        # dropdown lists it once (personal wins), the command is personal.
+        client.post(
+            "/",
+            data={
+                "lang": "en", "action": "save_preset", "preset_name": "repo route",
+                "vehicle_name": "807", "launch_config": "sds_road_readiness",
+                "route": "crows_landing_anticw_inner_loop",
+            },
+        )
+        page = client.post(
+            "/",
+            data={"lang": "en", "action": "load_preset", "preset_name": "repo route"},
+        ).get_data(as_text=True)
+        assert "--route crows_landing_anticw_inner_loop" in page
+
+    def test_remove_shared_says_where_it_lives(self, client, shared_dir):
+        page = client.post(
+            "/",
+            data={"lang": "en", "action": "remove_preset", "preset_name": "repo route"},
+        ).get_data(as_text=True)
+        assert "comes from the repo" in page
+        assert "repo route (shared)" in page  # still there — it's the repo's
+
+    def test_export_downloads_a_share_file(self, client, isolated_state):
+        client.post(
+            "/",
+            data={
+                "lang": "en", "action": "save_preset", "preset_name": "night loop",
+                "vehicle_name": "807", "launch_config": "sds_road_readiness",
+                "route": "shoreline_straight",
+            },
+        )
+        response = client.post(
+            "/", data={"lang": "en", "action": "export_preset", "preset_name": "night loop"}
+        )
+        assert response.status_code == 200
+        assert "attachment" in response.headers.get("Content-Disposition", "")
+        assert "night loop.json" in response.headers.get("Content-Disposition", "")
+        entry = json.loads(response.get_data())
+        assert entry["route"] == "shoreline_straight"
+        assert entry["kind"] == "values"
+
+    def test_import_upload_saves_the_preset(self, client, isolated_state):
+        data = json.dumps(SHARED_VALUES)
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "import_preset",
+                "preset_file": (io.BytesIO(data.encode()), "night loop.json"),
+            },
+            content_type="multipart/form-data",
+        ).get_data(as_text=True)
+        assert "Imported preset: night loop" in page
+        state = json.loads(isolated_state.read_text())
+        assert state["presets"]["night loop"]["route"] == "shoreline_straight"
+
+    def test_import_bad_upload_says_why(self, client, isolated_state):
+        page = client.post(
+            "/",
+            data={
+                "lang": "en",
+                "action": "import_preset",
+                "preset_file": (io.BytesIO(b'{"kind": "command"}'), "raw.json"),
+            },
+            content_type="multipart/form-data",
+        ).get_data(as_text=True)
+        assert "not a shared-able values preset" in page
+        # Nothing was saved: no state file appeared.
+        assert not isolated_state.exists() or "presets" not in json.loads(
+            isolated_state.read_text()
+        )
+
+    def test_import_without_a_file_prompts(self, client):
+        page = client.post(
+            "/", data={"lang": "en", "action": "import_preset", "preset_file": ""}
+        ).get_data(as_text=True)
+        assert "Choose a preset .json file first." in page
 
 
 class TestTruckFetch:

@@ -4,6 +4,8 @@
 
 *New to this tool, or don't write code? See [GETTING_STARTED.md](GETTING_STARTED.md) — a plain-language walkthrough with screenshots.*
 
+*Prefer watching? [docs/videos/](docs/videos/) has a short captioned video per feature, and [docs/confluence/](docs/confluence/) holds the team Confluence guide (Markdown + storage format, with a publish script).*
+
 A small local tool for building the `start_stack` launch command without memorizing flags. It ships two interfaces that share the same options and logic:
 
 - a **web UI** (Flask) you build the command in and copy out, and
@@ -156,6 +158,19 @@ The routes sync (see [Where the options come from](#where-the-options-come-from)
 | `ROUTES_BRANCH` | `master` | the branch it fetches |
 | `ROUTES_CACHE_DIR` | `~/.cache/start-stack-app/routes` | where the cache clone lives (delete it to force a fresh clone) |
 
+## Sharing presets through the repo
+
+A preset one tester builds can be one keystroke for everyone. **Shared presets** are JSON files committed under [`presets/`](presets/) in this repo; the app reads that directory fresh on every run, and since it self-updates from GitHub on launch (next section), a committed preset appears on every machine by itself — marked **(shared)** in both UIs, after your personal presets in the `!` `@` `#`… shortcut group.
+
+The flow:
+
+1. Build the command and save it as a preset (any wizard-built preset — custom raw commands can't be shared, the point is a route setup that rebuilds anywhere).
+2. **TUI:** start menu → **Export a preset to share** → pick it → the file lands in `exports/<name>.json` (gitignored). **Web:** select the preset → **Export** → the browser downloads `<name>.json`.
+3. Send that file to the repo owner (Slack, email, a PR).
+4. It gets committed as `presets/<name>.json` and pushed — done.
+
+Going the other way, **Import a preset file** (TUI: a path prompt; Web: a file upload) turns a file someone sent *you* into a personal preset. A personal preset with the same name as a shared one wins locally; **Remove a preset** only ever removes the local copy (shared ones live in the repo). Malformed files in `presets/` are skipped with a note, never fatal. See [`presets/README.md`](presets/README.md) for the file format.
+
 ## Staying current
 
 The app **updates itself from its own GitHub repo** (`origin` of this checkout) on launch — `self_update.py` fetches the running branch, and when origin is ahead, fast-forwards to it; the new code takes effect on the next launch (whose launcher script re-installs `requirements.txt` too). A **dirty working tree is never clobbered**: with local changes present the pull is skipped and the TUI says `start-stack-app <hash> is available — commit or stash your local changes to receive it`. The check runs at most once an hour, and every failure (offline, no `git`, not a repo) degrades to a silent no-op — updating must never break launching. On a successful update the TUI prints `(start-stack-app fast-forwarded to <hash> — restart to run the new version)`; the web server prints the equivalent to its console.
@@ -200,4 +215,32 @@ No code changes needed — both the web UI and the TUI read this file fresh on e
 ./venv/bin/python -m pytest
 ```
 
-Covers the command builder, options loading (including the brain2 live scan, its CSV fallback, and the nickname overlay), state/history/presets, the recorder's capture-backend detection and filename/sidecar helpers, the truck run-id fetch (script construction, output parsing, and the ssh round trip against a fake `ssh` binary), an end-to-end drive of the TUI wizard with mocked prompts, and the web UI via Flask's test client.
+Covers the command builder, shared presets (loader, export/import round trip, menu and web integration), options loading (including the brain2 live scan, its CSV fallback, and the nickname overlay), state/history/presets, the recorder's capture-backend detection and filename/sidecar helpers, the truck run-id fetch (script construction, output parsing, and the ssh round trip against a fake `ssh` binary), an end-to-end drive of the TUI wizard with mocked prompts, and the web UI via Flask's test client.
+
+## Apps Platform deployment
+
+The web UI also runs as an **Apps Platform** app (Cloud Run, auth handled by the platform):
+
+```
+apps-platform auth login          # once
+apps-platform app deploy          # from this directory
+```
+
+What's in place for it:
+
+- `project.toml` — `start-stack-app`, **`enable_filestore = true`**: Cloud Run's filesystem is ephemeral, so the presets/history state file moves onto the persistent mount (`/mnt/data/start-stack/.launch_state.json`) when running on the platform — presets survive redeploys and are shared across instances. Laptops and the TUI keep the classic `.launch_state.json`.
+- `Procfile` — `gunicorn --bind 0.0.0.0:$PORT app:app`; `gunicorn` is pinned in `requirements.txt`.
+- `/api/health` — the platform's liveness probe.
+- `.gcloudignore` — keeps the image lean (tests, videos, docs, venv and the TUI-only tooling don't ship; `presets/` does).
+- Self-update and the GitHub routes sync degrade silently in the container (not a git repo / no network): shared presets still work (they ship with the image), routes fall back to `options.csv`. Set `ROUTES_SYNC` off in the platform env if egress to GitHub isn't allowed.
+- The TUI is inherently a local tool — only the web UI deploys; both share the same state file format either way.
+
+## Regenerating the video guides
+
+```
+./venv/bin/pip install -r requirements-dev.txt && ./venv/bin/python -m playwright install chromium
+./venv/bin/python tools/make_videos.py            # all six, into docs/videos/
+./venv/bin/python tools/make_videos.py 03-route-autofill
+```
+
+The videos are recorded from the real app — the TUI runs in a pty, the web UI in a headless browser — with captions as the narration, so rerun this after any UI change and the guide never drifts. Needs `ffmpeg` on the PATH.

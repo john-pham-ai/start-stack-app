@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 import pytest
@@ -30,6 +31,29 @@ def isolated_state(tmp_path, monkeypatch):
     path = tmp_path / "state.json"
     monkeypatch.setattr(state_module, "STATE_PATH", str(path))
     return path
+
+
+class TestStatePathSelection:
+    """The Apps Platform deployment keeps presets across redeploys by
+    moving the state file onto the platform's persistent mount."""
+
+    def test_platform_moves_state_to_the_mount(self, monkeypatch):
+        monkeypatch.setenv("K_SERVICE", "start-stack-app")
+        monkeypatch.setattr(state_module.os.path, "isdir", lambda p: True)
+        assert state_module._default_state_path() == (
+            "/mnt/data/start-stack/.launch_state.json"
+        )
+
+    def test_no_mount_falls_back_to_the_tool_directory(self, monkeypatch):
+        monkeypatch.setenv("K_SERVICE", "start-stack-app")
+        monkeypatch.setattr(state_module.os.path, "isdir", lambda p: False)
+        assert state_module._default_state_path().endswith(".launch_state.json")
+
+    def test_local_machine_keeps_the_classic_path(self):
+        assert state_module._default_state_path() == os.path.join(
+            os.path.dirname(os.path.abspath(state_module.__file__)),
+            ".launch_state.json",
+        )
 
 
 def values(vehicle="truck-807", config="sds_road_readiness", route="", japan=False):

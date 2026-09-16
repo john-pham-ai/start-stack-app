@@ -1,3 +1,4 @@
 flask
 questionary
 pyperclip
+gunicorn==21.2.0

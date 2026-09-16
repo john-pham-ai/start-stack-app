@@ -1,0 +1,121 @@
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>2つのインターフェース、1つのツール。</strong> <code>./launch.sh</code>（または <code>launch</code> エイリアス）でキーボード操作のウィザードが開きます。<code>./run.sh</code> で Web UI が <a href="http://127.0.0.1:5050/?lang=ja">http://127.0.0.1:5050</a> に起動します。どちらも同じ <code>start_stack</code> コマンドを作成し、プリセットと履歴を共有し、結果をクリップボードにコピーします。リポジトリ: <a href="https://github.com/john-pham-ai/start-stack-app">john-pham-ai/start-stack-app</a> ・ <a href="https://appliedint-frontier.atlassian.net/wiki/spaces/IF/pages/739278854">English version of this guide</a></p></ac:rich-text-body></ac:structured-macro>
+
+<ac:structured-macro ac:name="toc"><ac:parameter ac:name="maxLevel">2</ac:parameter></ac:structured-macro>
+
+<h1>作成されるコマンド</h1>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[start_stack \
+  --vehicle_name truck-807 \
+  --launch_config sds_road_readiness \
+  --route shoreline_straight \
+  --enable_japan_driving]]></ac:plain-text-body></ac:structured-macro>
+<p><code>--route</code> と <code>--enable_japan_driving</code> は任意項目です。マップのフラグはありません — ルート自身がマップ情報を持っています。</p>
+
+<h1>ツールの入手（初回のみ）</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-07-setup-clone.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<ac:structured-macro ac:name="panel"><ac:parameter ac:name="title">リポジトリ</ac:parameter><ac:rich-text-body>
+<p><strong><a href="https://github.com/john-pham-ai/start-stack-app">github.com/john-pham-ai/start-stack-app</a></strong> — クローンしてスクリプトを1つ実行すれば、スタートメニューに到達します。その後はツールがこのリポジトリから<strong>自動的に最新版へ更新</strong>されるため（次節参照）、クローンは一度だけで済みます。</p>
+</ac:rich-text-body></ac:structured-macro>
+<ol>
+<li>ターミナルを開き、リポジトリをクローンします:
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[git clone https://github.com/john-pham-ai/start-stack-app.git
+cd start-stack-app]]></ac:plain-text-body></ac:structured-macro></li>
+<li>ランチャーを実行します — 初回は Python の venv を作成し、依存関係をインストールし、シェルに <code>launch</code> エイリアスを追加します（1分ほど）:
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">bash</ac:parameter><ac:plain-text-body><![CDATA[./launch.sh]]></ac:plain-text-body></ac:structured-macro></li>
+<li>言語を選べばスタートメニューです。次のターミナルからは、どのディレクトリでも <code>launch</code> と入力するだけ。ブラウザ版は <code>./run.sh</code> を実行して <a href="http://127.0.0.1:5050/?lang=ja">http://127.0.0.1:5050</a> を開きます。</li>
+</ol>
+<p><strong>必要なもの:</strong> <code>git</code> と <code>python3</code>（3.10 以上、<code>venv</code> モジュール付き — Ubuntu でランチャーに求められたら <code>sudo apt install python3-venv</code>）。クローン・自己更新・ルート同期のための GitHub へのアクセス。任意: <code>~/brain2</code>（または <code>BRAIN2_REPO_PATH</code>）のローカル <code>brain2</code> チェックアウト（オフライン時のルート一覧フォールバック）。</p>
+
+<h1>アプリは自動的に最新に保たれます</h1>
+<table><tbody>
+<tr><th>対象</th><th>仕組み</th><th>設定</th></tr>
+<tr><td><strong>アプリのコード</strong></td><td>起動時にアプリ自身の GitHub リポジトリを fetch し、origin が進んでいれば fast-forward します。新しいコードは<em>次回</em>起動から有効です。未コミットの変更がある場合は上書きせず、代わりにメッセージを表示します。</td><td><code>APP_UPDATE=off</code></td></tr>
+<tr><td><strong>ルート / マップ</strong></td><td><code>brain2</code>（<code>origin/master</code>）のルート専用 sparse クローンを <code>~/.cache/start-stack-app/routes</code> に保持し、起動時に更新します（最大1分に1回）。ローカルの brain2 チェックアウト、次に <code>options.csv</code> へフォールバックします。</td><td><code>ROUTES_SYNC=off</code></td></tr>
+<tr><td><strong>共有プリセット</strong></td><td>リポジトリの <code>presets/</code> にコミットされた JSON ファイル — アプリの更新と一緒に届きます。</td><td>—</td></tr>
+</tbody></table>
+
+<h1>1. スタートメニューとショートカットキー</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-01-start-menu-shortcuts.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<p>言語を選んだ後、すべてのメニュー項目にショートカットがあります: <strong>キーを押して、Enter</strong>。</p>
+<table><tbody>
+<tr><th>キー</th><th>グループ</th></tr>
+<tr><td><code>1</code> <code>2</code> <code>3</code> …</td><td>固定項目 — 作成、録画のみ、トラックから実行ID取得、SSHセットアップ、カスタム保存、ループ作成、書き出し/読み込み、終了</td></tr>
+<tr><td><code>!</code> <code>@</code> <code>#</code> <code>$</code> <code>%</code> <code>^</code> <code>&amp;</code> <code>*</code> <code>(</code> <code>)</code></td><td><strong>プリセット</strong>、保存順 — リポジトリ共有のものは <em>（共有）</em> と表示</td></tr>
+<tr><td><code>Q</code> <code>W</code> <code>E</code> <code>R</code></td><td><strong>日本のクローズドループ</strong>（最大4つ — ループごとに1キー）</td></tr>
+<tr><td><code>A</code> <code>S</code> <code>D</code> <code>F</code></td><td><strong>最近の実行</strong> — 直近4件、メニュー最下部</td></tr>
+</tbody></table>
+<p>プリセットや最近の実行を選ぶと、コマンドが表示・コピーされ、画面録画の確認が出ます（<code>r</code> で録画、<code>q</code> でスキップ）。どの操作の後もメニューに戻ります。終了するのは <strong>終了</strong> を選んだときだけです。</p>
+
+<h1>2. コマンドを作成する</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-02-build-command.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<ol>
+<li><strong>言語</strong> — English または 日本語（UI 全体が両言語対応です）。</li>
+<li><strong>新しいコマンドを作成</strong>（<code>1</code>）。</li>
+<li><strong>車両</strong> — 数字だけ入力: <code>807</code> で <code>truck-807</code> になります。<code>back</code> / <code>quit</code> と入力して移動もできます。</li>
+<li><strong>起動設定</strong> — 前回の選択が先頭に固定されています。Enter で採用。</li>
+<li><strong>ルート</strong>（任意）— §3 を参照。空欄 + Enter でルートなし。</li>
+<li><strong>日本走行モード</strong> — はい/いいえ（日本語を選んだ場合の初期値は「はい」）。</li>
+</ol>
+<p>コマンドはフラグごとに1行で表示され（シェルにそのまま貼り付け可）、すでにクリップボードにあります。<em>この選択内容をプリセットとして保存しますか？</em> に答えれば保存できます。</p>
+
+<h1>3. ルート選択: 入力してオートコンプリート</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-03-route-autofill.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<p><strong>ルート名またはマップ名</strong> の数文字を入力すると、180以上のルートがその場で絞り込まれます。<strong>Tab</strong>（または →）でハイライトされた候補を確定、↑/↓ で移動、空欄で ↓ を押すと全件表示。候補は <code>マップ — ルート</code> の形式です。</p>
+
+<h1>4. クローズドループ走行モード（日本）</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-04-closed-loop.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<p><strong>クローズドループ走行ルートを作成（日本）</strong>（<code>6</code>）で、基本コマンド（車両・起動設定 — 日本走行モードは強制的に有効）を尋ねられ、次に各<strong>停留所</strong>（ルート）を走行順に、同じオートコンプリート選択で追加します。空行、<code>done</code>、または <em>-- ルート完了 --</em> の行で終了。<code>back</code> で直前の停留所を削除。名前を付けて保存 — 最大4ループ、<code>Q</code>/<code>W</code>/<code>E</code>/<code>R</code> に対応します。</p>
+<p>ループの<strong>走行</strong>では、停留所1のコマンドが表示（コピー）され、走行中は待機し、次に停留所2…最後の停留所の後は停留所1に戻って次の周回へ。あなたが「完了」と言うまで続き、走行した周回数を報告します。</p>
+
+<h1>5. プリセット: 個人・共有・書き出しと読み込み</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-05-shared-presets.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<ul>
+<li><strong>個人プリセット</strong> はウィザード / Web フォームから保存され、自分のマシンだけに存在します。</li>
+<li><strong>共有プリセット</strong> はリポジトリの <code>presets/</code> フォルダにあり、全マシンに <em>（共有）</em> 付きで表示されます。変更・削除はリポジトリでのみ可能です。</li>
+<li>共有プリセットと同名の個人プリセットは、ローカルで<strong>優先</strong>されます。</li>
+</ul>
+<ac:structured-macro ac:name="panel"><ac:parameter ac:name="title">自分のプリセットをチームと共有する</ac:parameter><ac:rich-text-body>
+<ol>
+<li><strong>TUI:</strong> <em>プリセットを書き出して共有</em> → 選択 → ファイルが <code>exports/&lt;名前&gt;.json</code> に書き出されます。<br/><strong>Web:</strong> プリセットを選択 → <em>書き出す</em> → ブラウザが <code>&lt;名前&gt;.json</code> をダウンロードします。</li>
+<li>そのファイルをリポジトリ管理者に送ります（Slack、メール、PR）。</li>
+<li>管理者が <code>presets/</code> に配置してプッシュ。次回起動時に全員のアプリに反映されます — どこでも再入力は不要です。</li>
+</ol>
+</ac:rich-text-body></ac:structured-macro>
+<p>誰かから受け取ったファイルを<strong>読み込む</strong>: TUI <em>プリセットファイルを読み込む</em> → パス入力。Web <em>プリセットファイルを読み込む</em> → ファイルを選択 → <em>読み込む</em>。個人プリセットになります。</p>
+<ac:structured-macro ac:name="note"><ac:rich-text-body><p>共有できるのは<em>値</em>プリセット（車両 / 起動設定 / ルート / 日本走行モード）だけです。カスタムの生コマンドプリセットは個人用のままです — 共有の目的は、どのマシンでも正しく再構築できるルート設定だからです。</p></ac:rich-text-body></ac:structured-macro>
+
+<h1>6. Web UI</h1>
+<ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-06-web-ui.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
+<p>TUI と同じ選択肢・プリセット・履歴をブラウザで。右上の <strong>日本語 / English</strong> リンクで言語を切り替えます。ルート欄は<strong>コンボボックス</strong>: クリックでマップごとにグループ化された全一覧、入力で絞り込み、クリックまたは ↑/↓ + Enter で選択。<strong>コマンドを作成</strong> でコマンドが表示されます（自動コピー）。プリセットはドロップダウンから読み込み / 削除 / 書き出し。読み込みフォームは <code>.json</code> ファイルを受け付けます。</p>
+
+<h1>7. トラック関連の機能と画面録画</h1>
+<ul>
+<li><strong>トラックから最新の実行IDを取得</strong>（<code>3</code>）— ケーブル接続中のトラックに SSH し、最新の run id をコピーします。</li>
+<li><strong>トラックのSSHをセットアップ</strong>（<code>4</code>）— トラックごとに1回: トラック番号の名前で鍵とエイリアスを作成。</li>
+<li><strong>画面録画</strong> — 各コマンドの後に確認（<code>r</code> / <code>q</code>）、または <em>画面録画のみ</em>（<code>2</code>）/ <code>./recorder.sh</code> で単独実行。保存か破棄を選び、run id と Polarion テストケース ID でファイル名が決まります。</li>
+</ul>
+
+<h1>環境変数</h1>
+<table><tbody>
+<tr><th>変数</th><th>デフォルト</th><th>用途</th></tr>
+<tr><td><code>APP_UPDATE</code></td><td>オン</td><td><code>off</code> で自己更新チェックをスキップ</td></tr>
+<tr><td><code>ROUTES_SYNC</code></td><td>オン</td><td><code>off</code> で GitHub からのルート同期をスキップ（ローカルチェックアウトを使用）</td></tr>
+<tr><td><code>ROUTES_REMOTE_URL</code> / <code>ROUTES_BRANCH</code></td><td>brain2 / <code>master</code></td><td>ルートの同期元</td></tr>
+<tr><td><code>ROUTES_CACHE_DIR</code></td><td><code>~/.cache/start-stack-app/routes</code></td><td>ルートキャッシュの場所</td></tr>
+<tr><td><code>BRAIN2_REPO_PATH</code></td><td><code>~/brain2</code></td><td>ローカルチェックアウトのフォールバック</td></tr>
+<tr><td><code>TRUCK_SSH_TARGET</code></td><td><code>applied@192.168.1.11</code></td><td>トラックの SSH 接続先</td></tr>
+</tbody></table>
+
+<h1>トラブルシューティング</h1>
+<ac:structured-macro ac:name="expand"><ac:parameter ac:name="title">よくある症状と対処</ac:parameter><ac:rich-text-body>
+<table><tbody>
+<tr><th>症状</th><th>対処</th></tr>
+<tr><td><code>（start-stack-app の &lt;hash&gt; が利用可能です — ローカルの変更をコミットまたは退避…）</code></td><td>アプリのチェックアウトにローカルの編集があります。<code>git stash</code> かコミットして再起動してください。</td></tr>
+<tr><td>ルートが古い、または見つからない</td><td>ネットワークを確認。<code>rm -rf ~/.cache/start-stack-app/routes</code> で新しくクローンし直します。オフライン時: <code>~/brain2</code> で <code>git pull</code> し、<code>ROUTES_SYNC=off</code> で実行。</td></tr>
+<tr><td>共有プリセットが表示されない</td><td>ファイルが不正としてスキップされました — TUI にメッセージが出ます。管理者に <code>presets/&lt;名前&gt;.json</code> の修正を依頼してください。</td></tr>
+<tr><td>「ループが満杯です」</td><td>最大4ループ — 先に <em>保存したループを削除</em> してください。</td></tr>
+<tr><td>トラック取得: <em>トラックに到達できません</em></td><td>ケーブル/ネットワークを確認。トラックごとに1回 <em>トラックのSSHをセットアップ</em> を実行してください。</td></tr>
+</tbody></table>
+</ac:rich-text-body></ac:structured-macro>
+
+<hr/>
+<p><em>このページの動画は <code>tools/make_videos.py</code>（<code>VIDEO_LANG=ja</code>）で実際のアプリを日本語 UI で操作して生成したものです（音声なし・字幕付き）。UI 変更後に再生成して再添付すれば、ガイドがツールと食い違うことはありません。</em></p>

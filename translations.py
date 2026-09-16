@@ -35,6 +35,61 @@ TRANSLATIONS = {
         "en": "(start-stack-app {hash} is available — commit or stash your local changes to receive it)",
         "ja": "（start-stack-app の {hash} が利用可能です — ローカルの変更をコミットまたは退避すると受け取れます）",
     },
+    "shared_tag": {"en": "(shared)", "ja": "（共有）"},
+    "shared_broken": {
+        "en": "(skipped {n} unreadable file(s) in the repo's presets/ — ask the repo owner to fix or remove them)",
+        "ja": "（リポジトリの presets/ 内の読み取れないファイル {n} 個をスキップしました — 管理者に修正または削除を依頼してください）",
+    },
+    "export_menu": {
+        "en": "Export a preset to share",
+        "ja": "プリセットを書き出して共有",
+    },
+    "import_menu": {
+        "en": "Import a preset file",
+        "ja": "プリセットファイルを読み込む",
+    },
+    "export_prompt": {
+        "en": "Which preset should be shared?",
+        "ja": "どのプリセットを共有しますか？",
+    },
+    "export_none": {
+        "en": "No shareable presets yet — only presets built from the wizard's choices can be shared.",
+        "ja": "共有できるプリセットがまだありません — ウィザードで選択内容から作ったプリセットだけが共有できます。",
+    },
+    "export_done": {
+        "en": "Exported '{name}' to {path}",
+        "ja": "「{name}」を {path} に書き出しました",
+    },
+    "export_next_step": {
+        "en": "Send that file to the repo owner — it gets committed under presets/ and every machine picks it up on the next launch.",
+        "ja": "このファイルをリポジトリ管理者に送ってください — presets/ にコミットされると、各マシンの次回起動で自動的に取り込まれます。",
+    },
+    "import_prompt": {
+        "en": "Path to the preset file",
+        "ja": "プリセットファイルのパス",
+    },
+    "import_overwrite": {
+        "en": "A preset named '{name}' already exists — overwrite it?",
+        "ja": "「{name}」というプリセットが既に存在します — 上書きしますか？",
+    },
+    "import_done": {
+        "en": "Imported preset: {name}",
+        "ja": "プリセットを取り込みました: {name}",
+    },
+    "export_btn": {"en": "Export", "ja": "書き出す"},
+    "import_btn": {"en": "Import", "ja": "読み込む"},
+    "import_label": {
+        "en": "Import a preset file",
+        "ja": "プリセットファイルを読み込む",
+    },
+    "import_choose_file": {
+        "en": "Choose a preset .json file first.",
+        "ja": "先にプリセットの .json ファイルを選んでください。",
+    },
+    "shared_remove_note": {
+        "en": "'{name}' comes from the repo (shared) — ask for it to be changed or removed in presets/. Any personal copy with the same name was removed.",
+        "ja": "「{name}」はリポジトリ由来（共有）です — presets/ での変更・削除は管理者に依頼してください。同名の個人コピーがあった場合は削除しました。",
+    },
     "enable_japan_driving": {"en": "enable_japan_driving", "ja": "日本走行モードを有効化（enable_japan_driving）"},
     "none_option": {"en": "-- none --", "ja": "-- なし --"},
     "build_command": {"en": "Build command", "ja": "コマンドを作成"},

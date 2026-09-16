@@ -1,9 +1,11 @@
+import os
 import re
 
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, send_file
 
 import truck
 from self_update import BLOCKED, UPDATED, self_update
+from shared_presets import PresetImportError, load_shared_presets, merge_presets, parse_preset_export, write_temp_copy
 from stack_options import build_command, load_options
 from state import (
     CUSTOM_PRESET,
@@ -26,6 +28,13 @@ app = Flask(__name__)
 
 VEHICLE_NUMBER_RE = re.compile(r"^\d+$")
 
+
+@app.route("/api/health")
+def health():
+    """The Apps Platform's liveness probe (everything else sits behind the
+    platform's own auth; this one only says the process is up)."""
+    return {"status": "healthy"}
+
 PAGE = """
 <!doctype html>
 <title>{{ t(lang, 'title') }}</title>
@@ -47,6 +56,10 @@ PAGE = """
   .lang-switch { float: right; font-weight: normal; }
   .command-block { margin-top: 24px; }
   .history-meta { color: #666; font-size: 0.85em; margin-top: 8px; }
+  .preset-form, .import-form { margin-top: 4px; }
+  .import-form label { margin-top: 4px; font-weight: 400; }
+  .import-error { color: #a00; }
+  .preset-note { color: #060; }
 </style>
 <a class="lang-switch" href="?lang={{ 'ja' if lang == 'en' else 'en' }}">{{ t(lang, 'switch_language') }}</a>
 <h1>{{ t(lang, 'title') }}</h1>
@@ -56,13 +69,29 @@ PAGE = """
   <label>{{ t(lang, 'preset_label') }}
     <select id="preset-load" name="preset_name">
       <option value="">--</option>
-      {% for name, entry in presets.items() %}<option value="{{ name }}">{{ name }}{% if entry.get('kind') == 'command' %} {{ t(lang, 'custom_tag') }}{% endif %}</option>{% endfor %}
+      {# Personal presets first, then the repo's shared ones (marked) —
+         shared entries come from presets/ and live on every machine. #}
+      {% for name, entry in presets.items() %}<option value="{{ name }}">{{ name }}{% if entry.get('shared') %} {{ t(lang, 'shared_tag') }}{% elif entry.get('kind') == 'command' %} {{ t(lang, 'custom_tag') }}{% endif %}</option>{% endfor %}
     </select>
   </label>
   <button type="submit" name="action" value="load_preset" id="load-preset-btn" disabled>{{ t(lang, 'load_preset') }}</button>
   <button type="submit" name="action" value="remove_preset" id="remove-preset-btn" disabled>{{ t(lang, 'remove_preset') }}</button>
+  <button type="submit" name="action" value="export_preset" id="export-preset-btn" disabled>{{ t(lang, 'export_btn') }}</button>
 </form>
 {% endif %}
+{% if import_error %}
+<p class="import-error">{{ import_error }}</p>
+{% endif %}
+{% if preset_note %}
+<p class="preset-note">{{ preset_note }}</p>
+{% endif %}
+<form method="post" enctype="multipart/form-data" class="import-form">
+  <input type="hidden" name="lang" value="{{ lang }}">
+  <label>{{ t(lang, 'import_label') }}
+    <input type="file" name="preset_file" accept=".json,application/json">
+  </label>
+  <button type="submit" name="action" value="import_preset">{{ t(lang, 'import_btn') }}</button>
+</form>
 <form method="post">
   <input type="hidden" name="lang" value="{{ lang }}">
   <label>{{ t(lang, 'vehicle_name') }}
@@ -168,11 +197,13 @@ PAGE = """
     var presetSelect = document.getElementById("preset-load");
     var loadBtn = document.getElementById("load-preset-btn");
     var removeBtn = document.getElementById("remove-preset-btn");
+    var exportBtn = document.getElementById("export-preset-btn");
     if (presetSelect) {
       presetSelect.addEventListener("change", function () {
         var empty = !presetSelect.value;
         if (loadBtn) loadBtn.disabled = empty;
         if (removeBtn) removeBtn.disabled = empty;
+        if (exportBtn) exportBtn.disabled = empty;
       });
     }
   })();
@@ -418,6 +449,11 @@ def index():
     lang = request.values.get("lang", "en")
     if lang not in ("en", "ja"):
         lang = "en"
+    # Shared presets come from the repo's presets/ (see shared_presets.py);
+    # personal ones win on a name clash and list first. The merged map is
+    # built at render time, so a POST that saves/removes presets is
+    # reflected in the same page.
+    shared, _ = load_shared_presets()
     form = {
         "vehicle_name": options["vehicle_name"][0].value,
         "launch_config": options["launch_config"][0].value,
@@ -429,6 +465,8 @@ def index():
     truck_error = None
     truck_setup = None
     truck_setup_error = None
+    preset_note = None
+    import_error = None
     if request.method == "POST":
         action = request.form.get("action")
         if action == "truck_run":
@@ -456,9 +494,41 @@ def index():
                 truck_setup_error = t(lang, "truck_error_prefix") + " " + str(err)
         elif action == "remove_preset":
             # The preset form carries no command fields, so it just deletes
-            # (and re-renders) rather than building anything.
-            delete_preset(state, request.form.get("preset_name", ""))
+            # (and re-renders) rather than building anything. A shared name
+            # survives — it comes from the repo, not local state.
+            name = request.form.get("preset_name", "")
+            delete_preset(state, name)
             save_state(state)
+            if shared.get(name):
+                preset_note = t(lang, "shared_remove_note").format(name=name)
+        elif action == "export_preset":
+            # The selected preset downloads as a share file: send it in, it
+            # gets committed under presets/, every machine picks it up.
+            name = request.form.get("preset_name", "")
+            entry = load_preset(state, name) or shared.get(name) or {}
+            if entry and preset_kind(entry) != CUSTOM_PRESET:
+                return send_file(
+                    write_temp_copy(name, entry),
+                    as_attachment=True,
+                    download_name=f"{name}.json",
+                )
+            preset_note = t(lang, "export_none")
+        elif action == "import_preset":
+            # An upload joins the personal presets under its file name;
+            # a malformed file says why instead of failing silently.
+            upload = request.files.get("preset_file")
+            if upload is None or not upload.filename:
+                preset_note = t(lang, "import_choose_file")
+            else:
+                name = os.path.splitext(upload.filename)[0]
+                try:
+                    name, entry = parse_preset_export(upload.read(), name)
+                except PresetImportError as err:
+                    import_error = str(err)
+                else:
+                    save_preset(state, name, entry)
+                    save_state(state)
+                    preset_note = t(lang, "import_done").format(name=name)
         elif action == "save_custom_preset":
             # A raw command saved verbatim; the normalizer strips shell-prompt
             # and line-continuation paste artifacts.
@@ -469,7 +539,12 @@ def index():
             # Using a preset means the command comes out right away — values
             # presets get built, custom presets are shown verbatim — and the
             # copy script auto-copies it on page load. No re-walking the form.
-            entry = load_preset(state, request.form.get("preset_name", "")) or {}
+            # Shared presets resolve here too (they aren't in local state).
+            entry = (
+                load_preset(state, request.form.get("preset_name", ""))
+                or shared.get(request.form.get("preset_name", ""))
+                or {}
+            )
             if preset_kind(entry) == CUSTOM_PRESET:
                 command = entry["command"]
                 remember_command(state, command_entry_values(command), command, custom=True)
@@ -516,12 +591,17 @@ def index():
         truck_setup_error=truck_setup_error,
         lang=lang,
         t=t,
-        presets=state.get("presets", {}),
+        presets=merge_presets(state.get("presets", {}), shared),
+        preset_note=preset_note,
+        import_error=import_error,
         history=get_history(state, limit=10),
     )
 
 
 if __name__ == "__main__":
+    # Local runs bind like the platform does (PORT env, all interfaces)
+    # so behavior matches production; the platform itself serves through
+    # gunicorn (Procfile) and never reaches this block.
     # The server checks its own repo for updates before serving (a clean
     # tree fast-forwards; the new code takes effect on the next start).
     status, detail = self_update()
@@ -529,4 +609,8 @@ if __name__ == "__main__":
         print(f"start-stack-app fast-forwarded to {detail} — restart to run the new version.")
     elif status == BLOCKED:
         print(f"start-stack-app {detail} is available — commit or stash local changes to receive it.")
-    app.run(debug=True, port=5050)
+    app.run(
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", "5050")),
+        debug=bool(os.environ.get("START_STACK_DEBUG")),
+    )

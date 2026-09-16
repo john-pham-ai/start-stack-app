@@ -1,0 +1,9 @@
+{
+  "enable_japan_driving": false,
+  "exported_at": "2026-09-16T10:00:00",
+  "exported_by": "jp",
+  "kind": "values",
+  "launch_config": "sds_road_readiness",
+  "route": "shoreline_terminal_10kph",
+  "vehicle_name": "truck-807"
+}

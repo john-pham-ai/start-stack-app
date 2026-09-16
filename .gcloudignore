@@ -1,0 +1,17 @@
+# Keep the Apps Platform image lean: only the web app ships.
+.git
+.gitignore
+.gcloudignore
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+docs/
+tools/
+exports/
+.launch_state.json
+VERSION
+GETTING_STARTED.md
+README.md
+README.ja.md

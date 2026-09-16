@@ -8,10 +8,18 @@ import truck
 from questionary.prompts.common import InquirerControl
 from routes_sync import synced_commit
 from self_update import BLOCKED, UPDATED, self_update
+from shared_presets import (
+    PresetImportError,
+    export_preset,
+    import_preset_file,
+    load_shared_presets,
+    merge_presets,
+)
 from stack_options import build_command, load_options, map_key_for_route
 from state import (
     CUSTOM_PRESET,
     MAX_LOOPS,
+    VALUES_PRESET,
     LoopBucketFull,
     command_entry_values,
     command_values,
@@ -19,6 +27,7 @@ from state import (
     delete_preset,
     get_history,
     load_loop,
+    load_preset,
     load_state,
     loop_values,
     normalize_custom_command,
@@ -42,6 +51,8 @@ REMOVE_PRESET = object()  # "remove a preset" on the start menu
 DRIVE_LOOP = object()  # "drive a closed-loop mileage route" on the start menu
 BUILD_LOOP = object()  # "build a closed-loop mileage route" on the start menu
 REMOVE_LOOP = object()  # "remove a saved loop" on the start menu
+EXPORT_PRESET = object()  # "export a preset to share" on the start menu
+IMPORT_PRESET = object()  # "import a preset file" on the start menu
 BACK_TO_MENU = object()  # a pass that should return to the start menu
 
 # Start-menu shortcut keys (press, then Enter). Presets get the number-row
@@ -247,13 +258,17 @@ def ask_start_menu(state, lang):
     only mode and saving a custom command preset are always one pick
     away; the closed-loop entries join once relevant — driving one per
     saved loop, building one always available, removing one once any are
-    saved. Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM /
-    REMOVE_PRESET / DRIVE_LOOP / BUILD_LOOP / REMOVE_LOOP / QUIT), a
-    ("loop", name) tuple for a saved loop, a values dict loaded from a
-    values preset or history entry, or a LoadedCommand for a custom
+    saved.     Returns a sentinel (NEW / RECORD_ONLY / SAVE_CUSTOM / REMOVE_PRESET /
+    DRIVE_LOOP / BUILD_LOOP / REMOVE_LOOP / EXPORT_PRESET / IMPORT_PRESET /
+    QUIT), a ("loop", name) tuple for a saved loop, a values dict loaded
+    from a values preset or history entry, or a LoadedCommand for a custom
     command preset.
     """
-    presets = state.get("presets", {})
+    personal = state.get("presets", {})
+    shared, rejected = load_shared_presets()
+    if rejected:
+        print(t(lang, "shared_broken").format(n=len(rejected)))
+    presets = merge_presets(personal, shared)
     history = get_history(state, limit=RECENT_MENU_LIMIT)
     loops = state.get("loops", {})
 
@@ -272,7 +287,9 @@ def ask_start_menu(state, lang):
     ]
     for index, (name, entry) in enumerate(presets.items()):
         title = f"{t(lang, 'preset_label')}: {name}"
-        if preset_kind(entry) == CUSTOM_PRESET:
+        if entry.get("shared"):
+            title += f" {t(lang, 'shared_tag')}"
+        elif preset_kind(entry) == CUSTOM_PRESET:
             title += f" {t(lang, 'custom_tag')}"
         choices.append(
             Choice(title=title, value=("preset", name),
@@ -280,6 +297,9 @@ def ask_start_menu(state, lang):
         )
     if presets:
         choices.append(Choice(title=t(lang, "remove_preset"), value=REMOVE_PRESET))
+    if any(preset_kind(e) == VALUES_PRESET for e in personal.values()):
+        choices.append(Choice(title=t(lang, "export_menu"), value=EXPORT_PRESET))
+    choices.append(Choice(title=t(lang, "import_menu"), value=IMPORT_PRESET))
     # Saved loops: drive entries right after the presets, each one a
     # Q/W/E/R keystroke away.
     for index, name in enumerate(loops):
@@ -316,6 +336,8 @@ def ask_start_menu(state, lang):
         REMOVE_PRESET,
         BUILD_LOOP,
         REMOVE_LOOP,
+        EXPORT_PRESET,
+        IMPORT_PRESET,
     ):
         return answer
     if isinstance(answer, tuple) and answer[0] == "loop":
@@ -693,6 +715,73 @@ def remove_loop(state, lang):
     print(t(lang, "preset_removed").format(name=answer) + "\n")
 
 
+def export_preset_flow(state, lang):
+    """Pick a personal values preset and write its share file.
+
+    The export lands in exports/<name>.json next to the tool, carrying
+    the exporter's user and a timestamp; sending that file in gets it
+    committed under presets/, where every machine picks it up (see
+    shared_presets.py). Custom command presets can't be shared — the
+    point is route setups that rebuild anywhere.
+    """
+    exportable = {
+        name: entry
+        for name, entry in state.get("presets", {}).items()
+        if preset_kind(entry) == VALUES_PRESET
+    }
+    if not exportable:
+        print(t(lang, "export_none") + "\n")
+        return
+
+    choices = [Choice(title=t(lang, "back"), value=BACK)]
+    for name in exportable:
+        choices.append(Choice(title=name, value=name))
+    answer = questionary.select(t(lang, "export_prompt"), choices=choices).ask()
+    if answer is None or answer is BACK:
+        return
+
+    try:
+        path = export_preset(answer, exportable[answer])
+    except PresetImportError as err:
+        print(str(err) + "\n")
+        return
+    if path is None:  # unreachable from this picker; kept for safety
+        print(t(lang, "export_none") + "\n")
+        return
+    print(t(lang, "export_done").format(name=answer, path=path) + "\n")
+    print(t(lang, "export_next_step") + "\n")
+
+
+def import_preset_flow(state, lang):
+    """Read a preset export file in as a local preset.
+
+    The file's name (minus .json) becomes the preset's name; an existing
+    preset under that name is only replaced after an explicit confirm.
+    The imported preset is personal — it saves to local state, not the
+    repo (that's what presets/ + a commit is for).
+    """
+    answer = (questionary.path(t(lang, "import_prompt")).ask() or "").strip()
+    if not answer:
+        print(t(lang, "cancelled") + "\n")
+        return
+
+    try:
+        name, entry = import_preset_file(answer)
+    except PresetImportError as err:
+        print(str(err) + "\n")
+        return
+
+    if load_preset(state, name) is not None:
+        message = t(lang, "import_overwrite").format(name=name)
+        if not questionary.confirm(message, default=False).ask():
+            print(t(lang, "cancelled") + "\n")
+            return
+
+    save_preset(state, name, entry)
+    save_state(state)
+    print(t(lang, "import_done").format(name=name) + "\n")
+
+
 def validated(values, options):
     """Drop saved values that no longer exist in the current options.
 
@@ -903,6 +992,12 @@ def run_start_menu_session(options, state, lang, app_update=None):
             continue  # BACK_TO_MENU or nothing saved — menu either way
         if menu is REMOVE_LOOP:
             remove_loop(state, lang)
+            continue
+        if menu is EXPORT_PRESET:
+            export_preset_flow(state, lang)
+            continue
+        if menu is IMPORT_PRESET:
+            import_preset_flow(state, lang)
             continue
         if isinstance(menu, tuple) and menu[0] == "loop":
             drive_loop(state, lang, menu[1])

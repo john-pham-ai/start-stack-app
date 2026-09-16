@@ -1,9 +1,12 @@
+import json
 import os
 
 import pytest
 from questionary import Choice
 
 import launch
+import shared_presets
+from state import command_values
 from stack_options import Option
 from launch import (
     BACK,
@@ -745,7 +748,192 @@ class TestWizardEndToEnd:
         assert menu_answers == []
         assert "--vehicle_name truck-812" in capsys.readouterr().out
 
-    def test_record_only_menu_entry(self, monkeypatch, capsys):
+
+SHARED_VALUES = {
+    "vehicle_name": "truck-807",
+    "launch_config": "sds_road_readiness",
+    "route": "shoreline_straight",
+    "enable_japan_driving": False,
+}
+
+
+def seeded_shared_dir(tmp_path, name="repo route", **overrides):
+    """A presets/ dir holding one shared preset, for monkeypatching in."""
+    presets_dir = tmp_path / "presets"
+    presets_dir.mkdir()
+    (presets_dir / f"{name}.json").write_text(json.dumps(dict(SHARED_VALUES, **overrides)))
+    return str(presets_dir)
+
+
+class TestSharedPresetsMenu:
+    def test_shared_listed_after_personal_with_tag_and_shortcut(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(shared_presets, "PRESETS_DIR", seeded_shared_dir(tmp_path))
+        captured = {}
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                captured["choices"] = choices
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        state = {"presets": {"mine": dict(SHARED_VALUES, route="jp_loop")}}
+        ask_start_menu(state, "en")
+        titles = [c.title for c in captured["choices"]]
+        # Personal first, shared after, marked — and the ! @ shortcut run
+        # continues across the merged list.
+        assert "Preset: mine" in titles
+        assert "Preset: repo route (shared)" in titles
+        assert titles.index("Preset: mine") < titles.index("Preset: repo route (shared)")
+        preset_keys = [c.shortcut_key for c in captured["choices"] if c.title.startswith("Preset:")]
+        assert preset_keys == ["!", "@"]
+        assert "Export a preset to share" in titles  # personal values preset exists
+
+    def test_selecting_a_shared_preset_loads_its_values(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(shared_presets, "PRESETS_DIR", seeded_shared_dir(tmp_path))
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                self.choices = choices
+
+            def ask(self):
+                by_title = {c.title: c.value for c in self.choices}
+                return by_title["Preset: repo route (shared)"]
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        values = ask_start_menu({}, "en")
+        assert values == command_values(SHARED_VALUES)
+
+    def test_broken_shared_files_noted_not_fatal(self, monkeypatch, tmp_path, capsys):
+        presets_dir = tmp_path / "presets"
+        presets_dir.mkdir()
+        (presets_dir / "repo route.json").write_text(json.dumps(SHARED_VALUES))
+        (presets_dir / "broken.json").write_text("{oops")
+        monkeypatch.setattr(shared_presets, "PRESETS_DIR", str(presets_dir))
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                pass
+
+            def ask(_):
+                return None
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        assert ask_start_menu({}, "en") is QUIT
+        out = capsys.readouterr().out
+        assert "skipped 1 unreadable file" in out
+
+
+class TestExportPresetFlow:
+    def test_export_writes_the_share_file(self, monkeypatch, tmp_path, capsys):
+        exports = str(tmp_path / "exports")
+        monkeypatch.setattr(shared_presets, "EXPORTS_DIR", exports)
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                self.choices = choices
+
+            def ask(self):
+                by_title = {c.title: c.value for c in self.choices}
+                return by_title["night loop"]
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        state = {"presets": {"night loop": dict(SHARED_VALUES)}}
+        launch.export_preset_flow(state, "en")
+
+        entry = json.loads((tmp_path / "exports" / "night loop.json").read_text())
+        assert entry["route"] == "shoreline_straight"
+        assert entry["kind"] == "values"
+        out = capsys.readouterr().out
+        assert "Exported 'night loop'" in out
+        assert "Send that file to the repo owner" in out
+
+    def test_only_values_presets_offered(self, monkeypatch, tmp_path):
+        offered = []
+
+        class FakeSelect:
+            def __init__(self, message, choices=None, default=None, **kwargs):
+                offered.extend(c.title for c in choices if c.title not in ("<< Back",))
+
+            def ask(_):
+                return None  # back
+
+        monkeypatch.setattr(launch.questionary, "select", FakeSelect)
+        state = {"presets": {
+            "values one": dict(SHARED_VALUES),
+            "raw run": {"kind": "command", "command": "start_stack --flag"},
+        }}
+        launch.export_preset_flow(state, "en")
+        assert offered == ["values one"]
+
+    def test_nothing_shareable_says_so(self, monkeypatch, capsys):
+        state = {"presets": {"raw run": {"kind": "command", "command": "x"}}}
+        launch.export_preset_flow(state, "en")
+        assert "No shareable presets" in capsys.readouterr().out
+
+
+class TestImportPresetFlow:
+    @pytest.fixture(autouse=True)
+    def isolated_state(self, tmp_path, monkeypatch):
+        import state as state_module
+
+        monkeypatch.setattr(state_module, "STATE_PATH", str(tmp_path / "state.json"))
+
+    def test_import_saves_and_says(self, monkeypatch, tmp_path, capsys, isolated_state):
+        path = tmp_path / "night loop.json"
+        path.write_text(json.dumps(dict(SHARED_VALUES, kind="values", exported_by="jp")))
+
+        class FakePath:
+            def __init__(self, message, **kwargs):
+                pass
+
+            def ask(_):
+                return str(path)
+
+        monkeypatch.setattr(launch.questionary, "path", FakePath)
+        state = {}
+        launch.import_preset_flow(state, "en")
+        assert state["presets"]["night loop"] == command_values(SHARED_VALUES)
+        assert "Imported preset: night loop" in capsys.readouterr().out
+
+    def test_bad_file_says_why(self, monkeypatch, tmp_path, capsys):
+        path = tmp_path / "bad.json"
+        path.write_text("{oops")
+
+        class FakePath:
+            def __init__(self, message, **kwargs):
+                pass
+
+            def ask(_):
+                return str(path)
+
+        monkeypatch.setattr(launch.questionary, "path", FakePath)
+        state = {}
+        launch.import_preset_flow(state, "en")
+        assert not state.get("presets")
+        assert "Could not read a preset" in capsys.readouterr().out
+
+    def test_existing_name_needs_confirm(self, monkeypatch, tmp_path, capsys):
+        path = tmp_path / "night loop.json"
+        path.write_text(json.dumps(SHARED_VALUES))
+        monkeypatch.setattr(
+            launch.questionary, "path",
+            lambda message, **kw: type("P", (), {"ask": lambda s: str(path)})(),
+        )
+        confirm = []
+        monkeypatch.setattr(
+            launch.questionary, "confirm",
+            lambda message, **kw: type(
+                "C", (), {"ask": lambda s: confirm.append(message) or False}
+            )(),
+        )
+        state = {"presets": {"night loop": dict(SHARED_VALUES, route="jp_loop")}}
+        launch.import_preset_flow(state, "en")
+        assert any("already exists" in m for m in confirm)
+        # Declined: the existing preset is untouched.
+        assert state["presets"]["night loop"]["route"] == "jp_loop"
+
         import recorder
         import state as state_module
 
@@ -910,6 +1098,7 @@ class TestAskStartMenu:
             "Set up SSH for a truck (one-time per truck)",
             "Save a custom command as a preset",
             "Build a closed-loop mileage route (Japan)",
+            "Import a preset file",
             "Quit",
         ]
 
@@ -935,6 +1124,8 @@ class TestAskStartMenu:
             "Build a closed-loop mileage route (Japan)",
             "Preset: night loop",
             "Remove a preset",
+            "Export a preset to share",
+            "Import a preset file",
             "Recent: t · c",
             "Quit",
         ]
