@@ -427,8 +427,9 @@ class TestAppsPlatform:
         with open(os.path.join(root, "project.toml"), "rb") as f:
             config = tomllib.load(f)
         assert config["name"] == "start-stack-app"
-        # State must survive redeploys (presets!) — hence the Filestore.
-        assert config["enable_filestore"] is True
+        # State must survive redeploys (presets!) — hence the persistent
+        # storage mount (GCS Fuse, /mnt/data — same path Filestore used).
+        assert config["enable_gcs_fuse"] is True
         assert config["metadata"]["owner"] == "john.pham@applied.co"
 
 

@@ -15,6 +15,7 @@ def _default_state_path():
     to the tool, exactly as before, and the TUI and web UI keep sharing
     one file per machine.
     """
+    # (enable_gcs_fuse in project.toml; the mount path is /mnt/data either way.)
     if os.environ.get("K_SERVICE") and os.path.isdir("/mnt/data"):
         return os.path.join("/mnt/data", "start-stack", ".launch_state.json")
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), ".launch_state.json")

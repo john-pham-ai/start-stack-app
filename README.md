@@ -228,7 +228,7 @@ apps-platform app deploy          # from this directory
 
 What's in place for it:
 
-- `project.toml` — `start-stack-app`, **`enable_filestore = true`**: Cloud Run's filesystem is ephemeral, so the presets/history state file moves onto the persistent mount (`/mnt/data/start-stack/.launch_state.json`) when running on the platform — presets survive redeploys and are shared across instances. Laptops and the TUI keep the classic `.launch_state.json`.
+- `project.toml` — `start-stack-app`, **`enable_gcs_fuse = true`**: Cloud Run's filesystem is ephemeral, so the presets/history state file moves onto the platform's persistent per-app mount (`/mnt/data/start-stack/.launch_state.json`, GCS Fuse — the platform's current storage flag; `enable_filestore` is deprecated) when running there — presets survive redeploys and are shared across instances. Laptops and the TUI keep the classic `.launch_state.json`.
 - `Procfile` — `gunicorn --bind 0.0.0.0:$PORT app:app`; `gunicorn` is pinned in `requirements.txt`.
 - `/api/health` — the platform's liveness probe.
 - `.gcloudignore` — keeps the image lean (tests, videos, docs, venv and the TUI-only tooling don't ship; `presets/` does).

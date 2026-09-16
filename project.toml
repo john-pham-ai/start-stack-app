@@ -1,6 +1,5 @@
 name = "start-stack-app"
-enable_filestore = true
-enable_gcs_fuse = false
+enable_gcs_fuse = true
 enable_postgres = false
 enable_mysql = false
 enable_api_gateway = false
