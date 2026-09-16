@@ -1076,6 +1076,119 @@ class TestImportPresetFlow:
         assert "Cancelled." in out
 
 
+class TestDriveLoopRecording:
+    """The drive opens with a recording offer; one recording spans the
+    whole run and closes with keep/discard + the run-id pull."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_state(self, tmp_path, monkeypatch):
+        import state as state_module
+
+        monkeypatch.setattr(state_module, "STATE_PATH", str(tmp_path / "state.json"))
+
+    @pytest.fixture
+    def saved(self):
+        from state import save_loop
+
+        state = {}
+        save_loop(state, "jp night", {"vehicle_name": "truck-812", "launch_config": "etc"},
+                  ["jp_loop", "shoreline_straight"])
+        return state
+
+    def confirms(self, monkeypatch, answers):
+        queue = list(answers)
+
+        def make(message, default=False):
+            return type("A", (), {"ask": lambda s: queue.pop(0) if queue else False})()
+
+        monkeypatch.setattr(launch.questionary, "confirm", make)
+
+    def test_recording_finishes_with_loop_metadata_when_run_ends(self, monkeypatch, saved, capsys):
+        started_with = {}
+        monkeypatch.setattr(
+            launch.recorder, "start_drive_recording",
+            lambda lang: started_with.setdefault("lang", lang) or object(),
+        )
+        finished = {}
+        monkeypatch.setattr(
+            launch.recorder, "finish_drive_recording",
+            lambda lang, state, recording, vehicle_name="", metadata=None:
+            finished.update(lang=lang, vehicle=vehicle_name, metadata=metadata),
+        )
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        self.confirms(monkeypatch, [True, False])  # next stop: yes; wrap: no
+
+        launch.drive_loop(saved, "en", "jp night")
+
+        assert started_with["lang"] == "en"  # offered before the first stop
+        assert finished["vehicle"] == "truck-812"
+        assert finished["metadata"] == {
+            "loop_name": "jp night",
+            "stops": ["jp_loop", "shoreline_straight"],
+            "launch_config": "etc",
+            "enable_japan_driving": True,
+        }
+        assert "Full laps driven: 1" in capsys.readouterr().out
+
+    def test_offer_skipped_means_no_recording_no_finish(self, monkeypatch, saved, capsys):
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: None)
+        finished = []
+        monkeypatch.setattr(
+            launch.recorder, "finish_drive_recording", lambda *a, **k: finished.append(a)
+        )
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        self.confirms(monkeypatch, [True, False])  # next stop: yes; wrap: no
+
+        launch.drive_loop(saved, "en", "jp night")
+        assert finished == []  # nothing to close out
+        assert "Full laps driven: 1" in capsys.readouterr().out
+
+    def test_early_stop_still_finishes_the_recording(self, monkeypatch, saved, capsys):
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: object())
+        finished = []
+        monkeypatch.setattr(
+            launch.recorder, "finish_drive_recording", lambda *a, **k: finished.append(a)
+        )
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        # First stop-to-stop confirm: decline — the run ends mid-lap.
+        self.confirms(monkeypatch, [False])
+
+        launch.drive_loop(saved, "en", "jp night")
+        assert len(finished) == 1
+        out = capsys.readouterr().out
+        assert "Drive ended at lap 1, stop 1 of 2" in out
+
+    def test_ctrl_c_mid_drive_discards_the_recording_and_reraises(self, monkeypatch, saved):
+        class FakeRecording:
+            def __init__(self):
+                self.stopped = self.discarded = False
+
+            def stop(self):
+                self.stopped = True
+
+            def discard(self):
+                self.discarded = True
+
+        recording = FakeRecording()
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: recording)
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        finished = []
+        monkeypatch.setattr(
+            launch.recorder, "finish_drive_recording", lambda *a, **k: finished.append(a)
+        )
+
+        def explode(*a, **k):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(launch.questionary, "confirm", explode)
+        with pytest.raises(KeyboardInterrupt):
+            launch.drive_loop(saved, "en", "jp night")
+        # Leaving mid-drive, not finishing: stopped and discarded, never
+        # prompted for keep/run-id.
+        assert recording.stopped and recording.discarded
+        assert finished == []
+
+
 class TestAskStartMenu:
     def test_menu_always_shown(self, monkeypatch):
         # Even with nothing saved, the menu appears — with record-only and
@@ -1510,6 +1623,13 @@ class TestLoopMode:
         monkeypatch.setattr(state_module, "STATE_PATH", str(path))
         monkeypatch.setenv("BRAIN2_REPO_PATH", "/nonexistent-brain2")
         return path
+
+    @pytest.fixture(autouse=True)
+    def no_drive_recording(self, monkeypatch):
+        """These tests predate the drive recording; they drive without one
+        (the recording paths get their own class below — and the real offer
+        needs a TTY stdin, which pytest doesn't provide)."""
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: None)
 
     def confirms(self, monkeypatch, answers):
         """Queue answers for questionary.confirm; past the queue, decline."""

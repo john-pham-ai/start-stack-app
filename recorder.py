@@ -609,6 +609,66 @@ def run_recording_flow(lang, state, vehicle_name="", metadata=None):
     return video_path, sidecar_path
 
 
+def start_drive_recording(lang):
+    """The recording half a closed-loop drive opens with: ask, then start.
+
+    Unlike run_recording_flow, this does not block waiting for a stop
+    key — the drive's own stop-to-stop prompts run in the meantime and
+    the recording spans the whole run. Returns the live ScreenRecording,
+    or None when the tester skipped (q) or the capture couldn't start
+    (the reason is printed; the drive goes on unrecorded).
+    """
+    ready, hint = ensure_recording_deps()
+    if not ready:
+        print(t(lang, "record_setup_failed") + " " + (hint or "") + "\n")
+        return None
+    with keypress_mode():
+        if not wait_for_start(t(lang, "loop_record_prompt")):
+            return None
+    try:
+        recording = ScreenRecording()
+        recording.start()
+    except RecordingError as exc:
+        print(t(lang, "record_failed") + " " + str(exc) + "\n")
+        return None
+    print(t(lang, "loop_recording_running") + "\n")
+    return recording
+
+
+def finish_drive_recording(lang, state, recording, vehicle_name="", metadata=None):
+    """Close out a drive-long recording: stop, keep/discard, name, save.
+
+    Stops the capture (the run just ended), asks keep or discard, and on
+    keep runs the same run-id-and-test-case step every recording gets —
+    the "pull the latest run id from the truck?" toggle included, so the
+    drive's run id is one Yes away. Returns (video_path, sidecar_path),
+    DISCARDED, or None when there was nothing to finish.
+    """
+    if recording is None:
+        return None
+    recording.stop()
+    print("\n" + t(lang, "loop_recording_stopped").format(seconds=recording.duration_seconds) + "\n")
+    with keypress_mode():
+        if not wait_for_keep_or_discard(t(lang, "keep_or_discard_prompt")):
+            recording.discard()
+            print(t(lang, "recording_discarded") + "\n")
+            return DISCARDED
+
+    run_id, test_case_id, _skipped = ask_run_id_and_test_case(lang, state, vehicle_name)
+    video_path, sidecar_path = recording.finalize(
+        vehicle_name=vehicle_name, run_id=run_id, test_case_id=test_case_id, metadata=metadata
+    )
+    save_state(state)
+
+    print(t(lang, "recording_saved") + " " + video_path)
+    print(sidecar_path)
+    print(hyperlink(os.path.dirname(video_path), label=t(lang, "open_folder")) + "\n")
+    url = polarion_url(test_case_id)
+    if url:
+        print(t(lang, "polarion_link") + " " + url + "\n")
+    return video_path, sidecar_path
+
+
 def fetch_truck_run_id(lang, vehicle_name=""):
     """Fetch the latest run id from the cabled truck (truck.py).
 

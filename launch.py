@@ -629,7 +629,17 @@ def drive_loop(state, lang, name):
     there, then continues. After the last stop the loop closes back to
     the first and the wrap prompt asks for another lap; the run only ends
     when the tester says so (or quits), which is the point of a mileage
-    accumulation mode. Ctrl-C at any prompt also ends the drive.
+    accumulation mode.
+
+    The drive opens with a recording offer (start_drive_recording): a
+    loop is a long multi-stop session, so one recording spans the whole
+    run instead of interrupting it. Whatever way the drive ends — done
+    at the wrap prompt, stopping early, declining the next stop, or a
+    Ctrl-C that escapes the prompts — the recording stops, keep/discard
+    runs, and keeping it offers the run-id pull from the truck and the
+    Polarion id, exactly like any other recording. A Ctrl-C mid-drive
+    discards the recording instead of prompting (the tester is
+    leaving, not finishing).
     """
     entry = load_loop(state, name)
     if not entry:
@@ -638,6 +648,32 @@ def drive_loop(state, lang, name):
     values = loop_values(entry)
     stops = values["stops"]
 
+    recording = recorder.start_drive_recording(lang)
+    try:
+        _drive_laps(state, lang, values, stops)
+    except KeyboardInterrupt:
+        if recording:  # leaving mid-drive, not finishing: stop and discard
+            recording.stop()
+            recording.discard()
+        raise
+    if recording:
+        recorder.finish_drive_recording(
+            lang,
+            state,
+            recording,
+            vehicle_name=values["vehicle_name"],
+            metadata={
+                "loop_name": name,
+                "stops": stops,
+                "launch_config": values["launch_config"],
+                "enable_japan_driving": True,
+            },
+        )
+
+
+def _drive_laps(state, lang, values, stops):
+    """The laps themselves — ends (returns) when the tester says the run
+    is done, at the wrap prompt, or early at a stop-to-stop prompt."""
     laps = 0
     while True:  # laps — the tester declares the run done at the wrap prompt
         laps += 1

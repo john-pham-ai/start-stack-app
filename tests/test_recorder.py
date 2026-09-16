@@ -781,3 +781,120 @@ class TestVehicleRidesAlong:
         run_id, _tc, _skipped = ask_run_id_and_test_case("en", {}, "truck-805")
         assert seen == ["truck-805"]
         assert run_id == "run-x"
+
+
+class TestDriveRecording:
+    """The two halves a closed-loop drive uses: the offer that doesn't
+    block the drive's own prompts, and the close-out that carries the
+    run-id pull."""
+
+    def patch_tty_bits(self, monkeypatch, start_answer):
+        """keypress_mode/wait_for_start need a real TTY stdin — fake them."""
+        import contextlib
+
+        monkeypatch.setattr(recorder, "ensure_recording_deps", lambda: (True, ""))
+        monkeypatch.setattr(recorder, "keypress_mode", contextlib.nullcontext)
+        monkeypatch.setattr(
+            recorder, "wait_for_start", lambda prompt: start_answer
+        )
+
+    def test_start_returns_a_live_recording(self, monkeypatch):
+        started = []
+        monkeypatch.setattr(
+            recorder, "ScreenRecording",
+            type("R", (), {"start": lambda self: started.append(1) or None}),
+        )
+        self.patch_tty_bits(monkeypatch, start_answer=True)
+        recording = recorder.start_drive_recording("en")
+        assert recording is not None
+        assert started == [1]
+
+    def test_start_skipped_by_q(self, monkeypatch):
+        self.patch_tty_bits(monkeypatch, start_answer=False)
+        assert recorder.start_drive_recording("en") is None
+
+    def test_start_deps_missing_drives_on(self, monkeypatch, capsys):
+        monkeypatch.setattr(recorder, "ensure_recording_deps", lambda: (False, "install x"))
+        assert recorder.start_drive_recording("en") is None
+        out = capsys.readouterr().out
+        assert "install x" in out
+
+    def test_start_capture_failure_drives_on(self, monkeypatch, capsys):
+        def boom(self):
+            raise RecordingError("no backend")
+
+        monkeypatch.setattr(
+            recorder, "ScreenRecording", type("R", (), {"start": boom})
+        )
+        self.patch_tty_bits(monkeypatch, start_answer=True)
+        assert recorder.start_drive_recording("en") is None
+        assert "no backend" in capsys.readouterr().out
+
+    def test_finish_none_is_a_noop(self):
+        assert recorder.finish_drive_recording("en", {}, None) is None
+
+    def test_finish_keeps_pulls_run_id_and_finalizes(self, monkeypatch, tmp_path, capsys):
+        import contextlib
+
+        monkeypatch.setattr(recorder, "keypress_mode", contextlib.nullcontext)
+        monkeypatch.setattr(recorder, "wait_for_keep_or_discard", lambda prompt: True)
+        monkeypatch.setattr(
+            recorder, "ask_run_id_and_test_case",
+            lambda lang, state, vehicle: ("2026-09-16_run", "TC-7", False),
+        )
+
+        finalized = {}
+        saved = []
+
+        class FakeRecording:
+            duration_seconds = 61.0
+
+            def stop(self):
+                finalized["stopped"] = True
+
+            def discard(self):
+                finalized["discarded"] = True
+
+            def finalize(self, vehicle_name="", run_id="", test_case_id="", metadata=None):
+                finalized.update(
+                    vehicle=vehicle_name, run_id=run_id, tc=test_case_id, meta=metadata
+                )
+                return (str(tmp_path / "v.mp4"), str(tmp_path / "v.json"))
+
+        monkeypatch.setattr(recorder, "save_state", lambda state: saved.append(1))
+        recording = FakeRecording()
+        result = recorder.finish_drive_recording(
+            "ja", {"s": 1}, recording, vehicle_name="truck-812",
+            metadata={"loop_name": "jp night"},
+        )
+        assert result == (str(tmp_path / "v.mp4"), str(tmp_path / "v.json"))
+        assert finalized == {
+            "stopped": True,  # the capture ends with the drive
+            "vehicle": "truck-812",
+            "run_id": "2026-09-16_run",  # the pull option's answer rides in
+            "tc": "TC-7",
+            "meta": {"loop_name": "jp night"},
+        }
+        assert saved == [1]  # the recording state (remembered toggle etc.)
+        out = capsys.readouterr().out
+        assert "61.0秒" in out  # the ja stop line carries the drive's length
+        assert "v.mp4" in out
+
+    def test_finish_discarded(self, monkeypatch, capsys):
+        import contextlib
+
+        monkeypatch.setattr(recorder, "keypress_mode", contextlib.nullcontext)
+        monkeypatch.setattr(recorder, "wait_for_keep_or_discard", lambda prompt: False)
+        discarded = []
+        recording = type(
+            "R",
+            (),
+            {
+                "duration_seconds": 5.0,
+                "stop": lambda self: None,
+                "discard": lambda self: discarded.append(1),
+            },
+        )()
+        assert recorder.finish_drive_recording("en", {}, recording) is recorder.DISCARDED
+        assert discarded == [1]
+        assert "discarded" in capsys.readouterr().out.lower()

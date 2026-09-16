@@ -106,6 +106,18 @@ TRANSLATIONS = {
     "yes": {"en": "Yes", "ja": "はい"},
     "no": {"en": "No", "ja": "いいえ"},
     "cancelled": {"en": "Cancelled.", "ja": "キャンセルしました。"},
+    "loop_record_prompt": {
+        "en": "Record the screen for this loop drive? It runs until the drive ends. Press 'r' to start, or 'q' to skip: ",
+        "ja": "このループ走行の画面を録画しますか？ 走行終了まで録画が続きます。開始するには 'r'、スキップするには 'q' を押してください： ",
+    },
+    "loop_recording_running": {
+        "en": "Recording the drive — it stops automatically when the run ends.",
+        "ja": "走行を録画しています — 走行が終了すると自動的に停止します。",
+    },
+    "loop_recording_stopped": {
+        "en": "The drive's recording stopped ({seconds}s).",
+        "ja": "走行の録画を停止しました（{seconds}秒）。",
+    },
     "record_prompt": {
         "en": "Record the screen for this run? Press 'r' to start, or 'q' to skip: ",
         "ja": "この実行の画面を録画しますか？ 開始するには 'r'、スキップするには 'q' を押してください： ",
