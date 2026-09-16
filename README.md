@@ -110,6 +110,8 @@ Driving it — pick the loop from the menu, or answer yes to "Drive this loop no
 
 **Driving records like a test run:** the drive opens with a recording offer — `r` starts one recording that spans the whole drive (it stops itself when the run ends; the drive's own prompts work normally while it runs), `q` drives without one. Keeping the recording leads to the same close-out as any other: the **"pull the latest run id from the truck?"** option (the remembered Yes/No toggle), the Polarion test case id, and the file named by its run id — the sidecar notes the loop and its stops. A Ctrl-C mid-drive stops and discards the recording (leaving, not finishing) instead of prompting.
 
+**Long runs resume where they left off:** a drive that ends mid-lap — an early stop, a declined next stop, Ctrl-C at a prompt — is remembered per loop, and the next drive of it offers to pick up at the stop that was next (completed laps carried over). Declining starts fresh, a lap completed at the wrap prompt clears the remembered point, and re-saving the loop (an edited route) wipes it. An aborted Ctrl-C leaves the point where it was — the stop in hand gets re-issued.
+
 Saved loops appear on the main menu as **Drive a closed-loop mileage route (Japan) — <name>**, one pick to run any lap cycle again another day; **Remove a saved loop** deletes one. Removing and quitting behave like their preset equivalents.
 
 The loop bucket holds **at most 4 loops** — that's the `Q`/`W`/`E`/`R` menu shortcuts, one key per saved loop; building a fifth is refused up front ("Loops are full — remove one first"), so no stops get typed in for nothing. Re-saving an existing loop under its own name is always allowed — that's an edit, not a fifth loop.

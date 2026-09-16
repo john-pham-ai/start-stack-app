@@ -1189,6 +1189,142 @@ class TestDriveLoopRecording:
         assert finished == []
 
 
+class TestLoopResume:
+    """A drive that ends mid-lap leaves a resume point; the next drive of
+    the same loop offers to pick up there. All prompts are queued fakes."""
+
+    @pytest.fixture(autouse=True)
+    def isolated_state(self, tmp_path, monkeypatch):
+        import state as state_module
+
+        monkeypatch.setattr(state_module, "STATE_PATH", str(tmp_path / "state.json"))
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: None)
+
+    @pytest.fixture
+    def saved(self, monkeypatch):
+        from state import save_loop
+
+        monkeypatch.setattr(launch.pyperclip, "copy", lambda text: None)
+        state = {}
+        save_loop(state, "jp night", {"vehicle_name": "truck-812", "launch_config": "etc"},
+                  ["stop_a", "stop_b", "stop_c"])
+        return state
+
+    def confirms(self, monkeypatch, answers):
+        queue = list(answers)
+
+        def make(message, default=False):
+            self.prompts.append(str(message))
+            return type("A", (), {"ask": lambda s: queue.pop(0) if queue else False})()
+
+        monkeypatch.setattr(launch.questionary, "confirm", make)
+
+    @pytest.fixture(autouse=True)
+    def prompts(self):
+        self.prompts = []
+        return self.prompts
+
+    def progress(self, state):
+        from state import loop_progress
+
+        return loop_progress(state, "jp night")
+
+    def test_midlap_end_saves_the_next_stop(self, monkeypatch, saved, capsys):
+        self.confirms(monkeypatch, [False])  # decline "proceed to stop 2"
+        launch.drive_loop(saved, "en", "jp night")
+        assert self.progress(saved) is not None
+        assert self.progress(saved)["stop"] == 2
+        assert self.progress(saved)["laps_done"] == 0
+        assert "can resume at stop 2 of 3" in capsys.readouterr().out
+
+    def test_ctrl_c_at_the_prompt_reissues_the_inprogress_stop(self, monkeypatch, saved):
+        self.confirms(monkeypatch, [True, None])  # stop 2 issued, Ctrl-C at its confirm
+        launch.drive_loop(saved, "en", "jp night")
+        # Stop 2's command was in hand but maybe not driven: resume re-issues it.
+        assert self.progress(saved)["stop"] == 2
+
+    def test_ctrl_c_at_the_very_first_stop_reads_as_fresh(self, monkeypatch, saved):
+        self.confirms(monkeypatch, [None])  # Ctrl-C at stop 1's confirm
+        launch.drive_loop(saved, "en", "jp night")
+        # (1, 0) is indistinguishable from a start: any fresh drive re-issues
+        # stop 1 anyway, so the resume point reads as None.
+        assert self.progress(saved) is None
+
+    def test_full_lap_clears_the_resume_point(self, monkeypatch, saved, capsys):
+        self.confirms(monkeypatch, [True, True, False])  # stops 2,3; wrap: no
+        launch.drive_loop(saved, "en", "jp night")
+        assert self.progress(saved) is None
+        assert "Full laps driven: 1" in capsys.readouterr().out
+
+    def test_offered_resume_continues_at_the_saved_stop(self, monkeypatch, saved, capsys):
+        from state import set_loop_progress
+
+        set_loop_progress(saved, "jp night", 3, laps_done=1)
+        self.confirms(monkeypatch, [True, False])  # resume? yes; wrap: no
+        launch.drive_loop(saved, "en", "jp night")
+
+        out = capsys.readouterr().out
+        assert "resuming the last drive at stop 3 of 3" in out
+        assert out.count("=== Stop") == 1           # only the resumed stop shown
+        assert "--route stop_a" not in out           # earlier stops skipped
+        assert "--route stop_c" in out
+        # The carried lap count rides along: lap 1 was done, this makes 2.
+        assert "Full laps driven: 2" in out
+        assert self.progress(saved) is None         # lap completed: cleared
+        assert any("left off at stop 3" in p for p in self.prompts)
+
+    def test_declined_resume_starts_fresh_and_clears(self, monkeypatch, saved, capsys):
+        from state import set_loop_progress
+
+        set_loop_progress(saved, "jp night", 2, laps_done=0)
+        self.confirms(monkeypatch, [False, False, False])  # resume? no; stop 2? no -> end
+        launch.drive_loop(saved, "en", "jp night")
+
+        out = capsys.readouterr().out
+        assert out.count("=== Stop 1 of 3") == 1    # fresh from stop 1
+        assert "can resume at stop 2 of 3" in out  # ended mid-lap: saves anew
+        assert self.progress(saved)["stop"] == 2
+
+    def test_raw_ctrl_c_discards_recording_without_touching_progress(self, monkeypatch, saved):
+        class FakeRecording:
+            def __init__(self):
+                self.stopped = self.discarded = False
+
+            def stop(self):
+                self.stopped = True
+
+            def discard(self):
+                self.discarded = True
+
+        recording = FakeRecording()
+        monkeypatch.setattr(launch.recorder, "start_drive_recording", lambda lang: recording)
+        from state import set_loop_progress
+
+        set_loop_progress(saved, "jp night", 2, laps_done=0)
+
+        # First confirm = the resume prompt (yes); every later one = Ctrl-C.
+        confirm_calls = []
+
+        def make(message, default=False):
+            confirm_calls.append(str(message))
+            if len(confirm_calls) == 1:
+                return type("A", (), {"ask": lambda s: True})()
+
+            def boom(s):
+                raise KeyboardInterrupt
+
+            return type("B", (), {"ask": boom})()
+
+        monkeypatch.setattr(launch.questionary, "confirm", make)
+        with pytest.raises(KeyboardInterrupt):
+            launch.drive_loop(saved, "en", "jp night")
+        assert recording.stopped and recording.discarded
+        # An aborted drive keeps the old resume point, unmoved (stop 2 was
+        # re-issued, not moved past — and nothing was completed).
+        assert self.progress(saved)["stop"] == 2
+        assert "left off at stop 2" in confirm_calls[0]
+
+
 class TestAskStartMenu:
     def test_menu_always_shown(self, monkeypatch):
         # Even with nothing saved, the menu appears — with record-only and

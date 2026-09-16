@@ -117,6 +117,17 @@ Name it and it's saved (4 loops max → `Q`/`W`/`E`/`R`).
 then stop 2 … after the last stop it wraps to stop 1 for another lap, until
 you say the run is done. It reports full laps driven.
 
+**Long runs resume where they left off:** a drive that ends mid-lap is
+remembered per loop — the next drive of it offers to pick up at the stop
+that was next (completed laps carried over). Declining starts fresh; a lap
+completed at the wrap prompt clears the point.
+
+**The drive records like a test run:** it opens with a recording offer
+(`r` = one recording spans the whole drive, stopping itself when the run
+ends; `q` = drive without one). Keeping it runs the usual close-out — the
+**run-id pull from the truck** and the Polarion id — and the sidecar notes
+the loop and its stops.
+
 ## 5. Presets: personal, shared, export & import
 
 **Video:** `05-shared-presets.mp4`

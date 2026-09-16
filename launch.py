@@ -23,11 +23,13 @@ from state import (
     LoopBucketFull,
     command_entry_values,
     command_values,
+    clear_loop_progress,
     delete_loop,
     delete_preset,
     get_history,
     load_loop,
     load_preset,
+    loop_progress,
     load_state,
     loop_values,
     normalize_custom_command,
@@ -37,6 +39,7 @@ from state import (
     save_loop,
     save_preset,
     save_state,
+    set_loop_progress,
 )
 from translations import t
 
@@ -640,6 +643,12 @@ def drive_loop(state, lang, name):
     Polarion id, exactly like any other recording. A Ctrl-C mid-drive
     discards the recording instead of prompting (the tester is
     leaving, not finishing).
+
+    The loop remembers where the drive left off (state.loop_progress):
+    a mid-lap end — early stop, declined next stop, Ctrl-C at a prompt —
+    saves the next stop to issue, so re-driving the loop offers to
+    resume right there (laps carried over); declining starts fresh.
+    A lap completed at the wrap prompt clears the remembered point.
     """
     entry = load_loop(state, name)
     if not entry:
@@ -648,9 +657,28 @@ def drive_loop(state, lang, name):
     values = loop_values(entry)
     stops = values["stops"]
 
+    # Pick up where the last drive left off? Progress is remembered per
+    # loop (state.loop_progress); a resume re-issues the stop that was
+    # next, with the lap count carried over. Declining starts fresh.
+    start_stop, laps_done = 1, 0
+    progress = loop_progress(state, name)
+    if progress:
+        resume = questionary.confirm(
+            t(lang, "loop_resume_prompt").format(
+                i=progress["stop"], n=len(stops), lap=progress["laps_done"] + 1
+            ),
+            default=True,
+        ).ask()
+        if resume:
+            start_stop, laps_done = progress["stop"], progress["laps_done"]
+            print(t(lang, "loop_resuming").format(i=start_stop, n=len(stops)) + "\n")
+        else:
+            clear_loop_progress(state, name)
+            save_state(state)
+
     recording = recorder.start_drive_recording(lang)
     try:
-        _drive_laps(state, lang, values, stops)
+        _drive_laps(state, lang, name, values, stops, start_stop, laps_done)
     except KeyboardInterrupt:
         if recording:  # leaving mid-drive, not finishing: stop and discard
             recording.stop()
@@ -671,13 +699,24 @@ def drive_loop(state, lang, name):
         )
 
 
-def _drive_laps(state, lang, values, stops):
+def _drive_laps(state, lang, name, values, stops, start_stop=1, laps_done=0):
     """The laps themselves — ends (returns) when the tester says the run
-    is done, at the wrap prompt, or early at a stop-to-stop prompt."""
-    laps = 0
+    is done, at the wrap prompt, or early at a stop-to-stop prompt.
+
+    Progress is saved to the loop as the drive goes: the stop being issued
+    (so a Ctrl-C resumes by re-issuing it — the tester may not have driven
+    it yet), then the next stop once the tester moves on or declines (that
+    stop is done). Completing a lap at the wrap prompt clears progress —
+    a finished lap resumes at stop 1 anyway.
+    """
+    laps = laps_done
+    first_stop = start_stop
     while True:  # laps — the tester declares the run done at the wrap prompt
         laps += 1
         for index, stop in enumerate(stops, start=1):
+            if index < first_stop:
+                continue  # resumed past these — already driven last time
+            set_loop_progress(state, name, index, laps - 1)
             command = _stop_command(values, stop)
             print(f"\n=== {t(lang, 'loop_stop_n').format(i=index, n=len(stops))}: {stop} ===")
             print("\n" + command + "\n")
@@ -702,16 +741,31 @@ def _drive_laps(state, lang, values, stops):
                 proceed = questionary.confirm(
                     t(lang, "loop_next_stop").format(next=index + 1), default=True
                 ).ask()
-                if proceed is None or not proceed:
+                if proceed is None:  # Ctrl-C at the prompt: progress stays on this stop
                     _loop_summary(lang, laps, index, len(stops))
+                    save_state(state)
                     return
+                # This stop is driven either way; the next one is where a
+                # later drive picks up.
+                set_loop_progress(state, name, index + 1, laps - 1)
+                save_state(state)
+                if not proceed:
+                    _loop_summary(lang, laps, index, len(stops))
+                    print(t(lang, "loop_resume_note").format(i=index + 1, n=len(stops)) + "\n")
+                    return
+        first_stop = 1  # a resumed lap only skips stops the first time round
         # The last stop is done: the loop closes back to stop 1.
         proceed = questionary.confirm(
             t(lang, "loop_wrap_body").format(lap=laps + 1), default=True
         ).ask()
         if proceed is None or not proceed:
+            # A full lap is in the books — nothing to resume next time.
+            clear_loop_progress(state, name)
+            save_state(state)
             _loop_summary(lang, laps, len(stops), len(stops))
             return
+        set_loop_progress(state, name, 1, laps)
+        save_state(state)
         print(f"\n{t(lang, 'loop_wrap_title')}\n")
 
 

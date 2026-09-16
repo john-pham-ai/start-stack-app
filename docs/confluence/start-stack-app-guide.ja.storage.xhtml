@@ -65,6 +65,8 @@ cd start-stack-app]]></ac:plain-text-body></ac:structured-macro></li>
 <ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-04-closed-loop.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>
 <p><strong>クローズドループ走行ルートを作成（日本）</strong>（<code>6</code>）で、基本コマンド（車両・起動設定 — 日本走行モードは強制的に有効）を尋ねられ、次に各<strong>停留所</strong>（ルート）を走行順に、同じオートコンプリート選択で追加します。空行、<code>done</code>、または <em>-- ルート完了 --</em> の行で終了。<code>back</code> で直前の停留所を削除。名前を付けて保存 — 最大4ループ、<code>Q</code>/<code>W</code>/<code>E</code>/<code>R</code> に対応します。</p>
 <p>ループの<strong>走行</strong>では、停留所1のコマンドが表示（コピー）され、走行中は待機し、次に停留所2…最後の停留所の後は停留所1に戻って次の周回へ。あなたが「完了」と言うまで続き、走行した周回数を報告します。</p>
+<p><strong>長期ルートは前回の続きから再開:</strong> 周回途中で終わった走行 — 途中停止、次の停留所への移動の辞退、プロンプトでの Ctrl-C — はループごとに記憶され、次回の走行で「次の停留所」から再開するか尋ねます（完走周回数は引き継ぎ）。辞退すれば最初から、ラップ完走でクリアされます。</p>
+<p><strong>走行はテストランとして録画:</strong> 開始時に録画の確認があります — <code>r</code> で1本の録画が走行全体をカバーし（走行終了時に自動停止）、<code>q</code> で録画なしで走行できます。保存すれば他の録画と同じ後処理 — <strong>トラックからの run id 取得</strong>と Polarion ID — に進み、サイドカーにループ名と停留所が記録されます。</p>
 
 <h1>5. プリセット: 個人・共有・書き出しと読み込み</h1>
 <ac:structured-macro ac:name="multimedia"><ac:parameter ac:name="name"><ri:attachment ri:filename="ja-05-shared-presets.mp4" /></ac:parameter><ac:parameter ac:name="width">960</ac:parameter></ac:structured-macro>

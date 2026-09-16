@@ -114,6 +114,18 @@ TRANSLATIONS = {
         "en": "Recording the drive — it stops automatically when the run ends.",
         "ja": "走行を録画しています — 走行が終了すると自動的に停止します。",
     },
+    "loop_resume_prompt": {
+        "en": "The last drive of this loop left off at stop {i} of {n} (lap {lap}) — resume from there?",
+        "ja": "このループの前回の走行は停留所 {i}/{n}（周回 {lap}）で終わっています — そこから再開しますか？",
+    },
+    "loop_resuming": {
+        "en": "(resuming the last drive at stop {i} of {n})",
+        "ja": "（前回の走行を停留所 {i}/{n} から再開）",
+    },
+    "loop_resume_note": {
+        "en": "(the next drive of this loop can resume at stop {i} of {n})",
+        "ja": "（このループの次回の走行は停留所 {i}/{n} から再開できます）",
+    },
     "loop_recording_stopped": {
         "en": "The drive's recording stopped ({seconds}s).",
         "ja": "走行の録画を停止しました（{seconds}秒）。",

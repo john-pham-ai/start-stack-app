@@ -6,8 +6,11 @@ import pytest
 import state as state_module
 from state import (
     MAX_HISTORY_ENTRIES,
+    clear_loop_progress,
     delete_loop,
     load_loop,
+    loop_progress,
+    set_loop_progress,
     save_loop,
     command_entry_values,
     command_values,
@@ -339,3 +342,59 @@ class TestLoops:
         assert save_loop(state, "L0", self.VALUES, ["other_loop"]) == "L0"
         assert len(state["loops"]) == state_module.MAX_LOOPS
         assert state["loops"]["L0"]["stops"] == ["other_loop"]
+
+
+class TestLoopProgress:
+    """Where the last drive of a loop stopped — the resume point."""
+
+    VALUES = {"vehicle_name": "truck-812", "launch_config": "etc"}
+
+    def seed(self, state, stops, progress=None):
+        from state import save_loop
+
+        save_loop(state, "L", self.VALUES, stops)
+        if progress:
+            state["loops"]["L"]["progress"] = progress
+        return state
+
+    def test_none_for_a_fresh_loop(self):
+        assert loop_progress(self.seed({}, ["a", "b"]), "L") is None
+
+    def test_saved_progress_reads_back(self):
+        state = self.seed({}, ["a", "b", "c"], {"stop": 2, "laps_done": 1, "updated_at": "x"})
+        assert loop_progress(state, "L") == {"stop": 2, "laps_done": 1, "updated_at": "x"}
+
+    def test_start_of_everything_is_none(self):
+        # (1, 0) is "the very beginning" — nothing to offer resuming.
+        state = self.seed({}, ["a"], {"stop": 1, "laps_done": 0})
+        assert loop_progress(state, "L") is None
+
+    def test_stale_past_the_stops_is_ignored(self):
+        # A loop edited down to fewer stops never resumes past its end.
+        state = self.seed({}, ["a"], {"stop": 3, "laps_done": 0})
+        assert loop_progress(state, "L") is None
+
+    def test_garbage_is_ignored(self):
+        state = self.seed({}, ["a", "b"], {"stop": "two"})
+        assert loop_progress(state, "L") is None
+
+    def test_set_and_clear(self):
+        state = self.seed({}, ["a", "b", "c"])
+        set_loop_progress(state, "L", 3, 1)
+        assert loop_progress(state, "L")["stop"] == 3
+        assert loop_progress(state, "L")["laps_done"] == 1
+        clear_loop_progress(state, "L")
+        assert loop_progress(state, "L") is None
+
+    def test_resaving_the_loop_wipes_progress(self):
+        from state import save_loop
+
+        state = self.seed({}, ["a", "b"], {"stop": 2, "laps_done": 0})
+        # An edited loop is a new route: its old resume point must not survive.
+        save_loop(state, "L", self.VALUES, ["a", "b", "c"])
+        assert loop_progress(state, "L") is None
+
+    def test_missing_loop_is_safe(self):
+        assert loop_progress({}, "nope") is None
+        assert set_loop_progress({}, "nope", 1, 0) is None
+        clear_loop_progress({}, "nope")  # no error

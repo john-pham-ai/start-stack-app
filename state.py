@@ -236,6 +236,62 @@ def load_loop(state, name):
     return state.get("loops", {}).get(name)
 
 
+# --- resuming a loop drive --------------------------------------------------
+#
+# A mileage run rarely ends exactly at the wrap prompt: the tester stops
+# mid-lap (end of shift, a truck issue) and picks the same loop up later.
+# The loop remembers where the drive left off — the stop to issue next and
+# how many full laps were driven — so the next drive can resume there
+# instead of re-issuing stops already driven. Progress lives inside the
+# loop entry under "progress" and is cleared when a lap completes at the
+# wrap prompt (nothing to resume) or when the tester chooses to start over.
+
+
+def loop_progress(state, name):
+    """Where the last drive of this loop stopped, or None for a fresh start.
+
+    Returns {"stop": 1-based index of the stop to issue next, "laps_done":
+    full laps driven so far, "updated_at": iso} — validated against the
+    loop's current stops, so a loop edited to fewer stops never resumes
+    past its end.
+    """
+    entry = load_loop(state, name)
+    if not entry:
+        return None
+    progress = entry.get("progress")
+    if not isinstance(progress, dict):
+        return None
+    stops = loop_values(entry)["stops"]
+    stop = progress.get("stop")
+    laps_done = progress.get("laps_done", 0)
+    if not isinstance(stop, int) or not isinstance(laps_done, int):
+        return None
+    if not (1 <= stop <= len(stops)) or laps_done < 0:
+        return None
+    if stop == 1 and laps_done == 0:
+        return None  # the very beginning: nothing to resume
+    return {"stop": stop, "laps_done": laps_done, "updated_at": progress.get("updated_at", "")}
+
+
+def set_loop_progress(state, name, stop, laps_done, now=None):
+    """Remember that the next stop to issue is `stop` after `laps_done` laps."""
+    entry = load_loop(state, name)
+    if entry is None:
+        return None
+    entry["progress"] = {
+        "stop": int(stop),
+        "laps_done": int(laps_done),
+        "updated_at": (now or datetime.now()).isoformat(timespec="seconds"),
+    }
+    return entry["progress"]
+
+
+def clear_loop_progress(state, name):
+    entry = load_loop(state, name)
+    if entry is not None:
+        entry.pop("progress", None)
+
+
 def delete_loop(state, name):
     """Remove a saved loop by name. Returns True if it existed."""
     loops = state.get("loops", {})
